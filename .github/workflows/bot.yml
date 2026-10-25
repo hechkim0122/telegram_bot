@@ -1,11 +1,10 @@
 name: Run Telegram Bot
 
 on:
-  workflow_dispatch:        # شروع دستی از تب Actions
+  workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"  # هر ۳۰ دقیقه یک اجرا در صف می‌گذارد
+    - cron: "*/30 * * * *"
 
-# فقط یک اجرا در لحظه، تا دو نمونه ربات همزمان با هم تداخل نکنند
 concurrency:
   group: telegram-bot
   cancel-in-progress: false
@@ -27,5 +26,5 @@ jobs:
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          RUN_SECONDS: "21000"   # ۵ ساعت و ۵۰ دقیقه
+          RUN_SECONDS: "21000"
         run: python bot.py
