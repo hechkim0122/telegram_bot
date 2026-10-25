@@ -1,6 +1,6 @@
 {
   "welcome": "🌍 به «دنیای من» خوش اومدی!\nدنیای سرگرمی و هیجان 🎉\n\nیکی از بخش‌ها رو انتخاب کن:",
-  "website_url": "https://hechkim0122.github.io/donyayeman",
+  "website_url": "https://hechkim0122.github.io/doyayeman",
   "support": {
     "text": "💬 پشتیبانی\n\nسؤال یا مشکلی داری؟ مستقیم به ادمین پیام بده.",
     "contact": "@hechkim0122"
@@ -85,5 +85,9 @@
       ]
     }
   },
-  "storage_chat_id": 0
+  "storage_chat_id": 0,
+  "required_channels": [
+    "@donyayeman0122",
+    "@kingproxy0122"
+  ]
 }

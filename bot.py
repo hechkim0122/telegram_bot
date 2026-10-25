@@ -4,15 +4,20 @@ import logging
 import os
 from pathlib import Path
 
-from telegram import InlineKeyboardButton as _Btn
 from telegram import (
-    InlineKeyboardMarkup as Markup,
+    BotCommand,
     InlineQueryResultArticle,
     InlineQueryResultPhoto,
+    InlineQueryResultsButton,
     InputMediaPhoto,
     InputTextMessageContent,
+    KeyboardButton,
+    MenuButtonCommands,
+    ReplyKeyboardMarkup,
     Update,
 )
+from telegram import InlineKeyboardButton as _Btn
+from telegram import InlineKeyboardMarkup as Markup
 from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder,
@@ -24,26 +29,10 @@ from telegram.ext import (
     filters,
 )
 
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO
-)
-log = logging.getLogger("donyaye-man")
-
 import engine
 
-BOARD_URL = os.environ.get(
-    "BOARD_URL", "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/board.jpg"
-)
-BANNER_URL = os.environ.get(
-    "BANNER_URL", "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/banner.jpg"
-)
-
-
-def Btn(text, style=None, **kw):
-    """دکمه‌ی رنگی: style = primary (آبی) / success (سبز) / danger (قرمز)"""
-    if style:
-        kw["api_kwargs"] = {"style": style}
-    return _Btn(text, **kw)
+logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
+log = logging.getLogger("donyaye-man")
 
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
@@ -52,12 +41,25 @@ if not TOKEN:
 BASE = Path(__file__).parent
 CONTENT_FILE = BASE / "content.json"
 BANNER_FILE = BASE / "banner.jpg"
+RAW = "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/"
+BANNER_URL = os.environ.get("BANNER_URL", RAW + "banner.jpg")
+BOARD_URL = os.environ.get("BOARD_URL", RAW + "board.jpg")
+
+
+def Btn(text, style=None, **kw):
+    """دکمه‌ی رنگی: style = primary (آبی) / success (سبز) / danger (قرمز)"""
+    if style:
+        kw["api_kwargs"] = {"style": style}
+    return _Btn(text, **kw)
+
+
+def KBtn(text, style=None):
+    return KeyboardButton(text, api_kwargs={"style": style}) if style else KeyboardButton(text)
 
 
 def load_content() -> dict:
-    # هر بار خوانده می‌شود تا با ویرایش content.json نیازی به ری‌استارت نباشد
     with open(CONTENT_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        return json.load(f)  # هر بار خوانده می‌شود؛ ویرایش فایل نیاز به ری‌استارت ندارد
 
 
 def tg_link(username: str) -> str:
@@ -66,39 +68,55 @@ def tg_link(username: str) -> str:
 
 # ---------- کیبوردها ----------
 
-def home_markup(data: dict) -> Markup:
-    s = data["sections"]
-    return Markup(
-        [
-            [Btn("🌐 ورود به وبسایت", "primary", url=data["website_url"])],
-            [
-                Btn(s["services"]["title"], "primary", callback_data="cat:services"),
-                Btn(s["tutorials"]["title"], "success", callback_data="cat:tutorials"),
-                Btn(s["games"]["title"], "danger", callback_data="cat:games"),
-            ],
-            [
-                Btn(data["settings"]["title"], callback_data="cat:settings"),
-                Btn("💬 پشتیبانی", "success", callback_data="support"),
-            ],
-        ]
-    )
-
-
-def get_category(data: dict, key: str) -> dict:
-    return data["settings"] if key == "settings" else data["sections"][key]
-
-
-def back_row(key: str):
-    return [Btn("⬅️ بازگشت", callback_data=f"cat:{key}")]
-
-
 HOME_ROW = [Btn("🏠 منوی اصلی", callback_data="home")]
 
 
-# ---------- نمایش پیام ----------
+def home_markup(data):
+    s = data["sections"]
+    return Markup([
+        [Btn("🌐 ورود به وبسایت", "primary", url=data["website_url"])],
+        [
+            Btn(s["services"]["title"], "primary", callback_data="cat:services"),
+            Btn(s["tutorials"]["title"], "success", callback_data="cat:tutorials"),
+            Btn(s["games"]["title"], "danger", callback_data="cat:games"),
+        ],
+        [
+            Btn(data["settings"]["title"], callback_data="cat:settings"),
+            Btn("💬 پشتیبانی", "success", callback_data="support"),
+        ],
+    ])
 
-async def show(q, text: str, markup: Markup):
-    """پیام اولیه عکس (بنر) است؛ پس کپشن را ویرایش می‌کنیم."""
+
+def get_category(data, key):
+    return data["settings"] if key == "settings" else data["sections"][key]
+
+
+def cat_markup(data, key):
+    rows = [[Btn(it["title"], callback_data=f"item:{key}:{i}")] for i, it in enumerate(get_category(data, key)["items"])]
+    return Markup(rows + [HOME_ROW])
+
+
+def support_markup(data):
+    return Markup([[Btn("💬 پیام به پشتیبانی", "success", url=tg_link(data["support"]["contact"]))], HOME_ROW])
+
+
+def bottom_kb(data):
+    """دکمه‌های ثابت پایین چت"""
+    s = data["sections"]
+    return ReplyKeyboardMarkup(
+        [
+            [KBtn("🏠 صفحه اصلی", "primary")],
+            [KBtn(s["services"]["title"], "primary"), KBtn(s["tutorials"]["title"], "success"), KBtn(s["games"]["title"], "danger")],
+            [KBtn(data["settings"]["title"]), KBtn("💬 پشتیبانی", "success")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="یکی از بخش‌ها رو انتخاب کن…",
+    )
+
+
+async def show(q, text, markup):
+    """بنر عکس است؛ پس کپشن را ویرایش می‌کنیم (برای پیام‌های متنی، خود متن)."""
     try:
         if q.message.photo:
             await q.edit_message_caption(caption=text, reply_markup=markup)
@@ -109,18 +127,66 @@ async def show(q, text: str, markup: Markup):
             raise
 
 
-async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- قفل کانال ----------
+
+async def not_joined(context, uid):
+    missing = []
+    for ch in load_content().get("required_channels", []):
+        try:
+            m = await context.bot.get_chat_member(ch, uid)
+            if m.status in ("left", "kicked"):
+                missing.append(ch)
+        except Exception as e:  # ربات ادمین کانال نیست؟ کاربر را قفل نکن
+            log.warning("بررسی عضویت %s ناموفق بود: %s", ch, e)
+    return missing
+
+
+def lock_view(chs):
+    rows = [[Btn(f"📢 عضویت در {c}", "primary", url=tg_link(c))] for c in chs]
+    rows.append([Btn("✅ عضو شدم", "success", callback_data="joined")])
+    return "🔒 برای استفاده از ربات اول عضو کانال‌های زیر شو، بعد «عضو شدم» رو بزن.", Markup(rows)
+
+
+async def gate(update, context):
+    """True یعنی کاربر اجازه‌ی ادامه دارد. قفل فقط در پیوی ربات اعمال می‌شود."""
+    if update.effective_chat.type != "private":
+        return True
+    miss = await not_joined(context, update.effective_user.id)
+    if not miss:
+        return True
+    text, kb = lock_view(miss)
+    q = update.callback_query
+    if q:
+        await show(q, text, kb)
+    else:
+        await update.effective_message.reply_text(text, reply_markup=kb)
+    return False
+
+
+async def on_joined(update, context):
+    q = update.callback_query
+    if await not_joined(context, q.from_user.id):
+        return await q.answer("هنوز عضو همه‌ی کانال‌ها نشدی 😅", show_alert=True)
+    await q.answer("✅ خوش اومدی!")
+    msg = q.message
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    await send_home(update, context)
+    await send_kb(msg)
+
+
+# ---------- صفحه‌ی اصلی ----------
+
+async def send_home(update, context):
     data = load_content()
     u, ch = update.effective_user, update.effective_chat
     if u and ch.type == "private" and (u.username or "").lower() == data["support"]["contact"].lstrip("@").lower():
-        context.bot_data["storage"] = ch.id
-    markup = home_markup(data)
-    msg = update.effective_message
-
+        context.bot_data["storage"] = ch.id  # برای ساخت تصویر تخته‌ی بازی
+    markup, msg = home_markup(data), update.effective_message
     if not BANNER_FILE.exists():
-        await msg.reply_text(data["welcome"], reply_markup=markup)
-        return
-
+        return await msg.reply_text(data["welcome"], reply_markup=markup)
     cached = context.bot_data.get("banner_id")
     if cached:
         await msg.reply_photo(cached, caption=data["welcome"], reply_markup=markup)
@@ -130,79 +196,58 @@ async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.bot_data["banner_id"] = sent.photo[-1].file_id
 
 
-# ---------- بازی آنلاین ----------
-
-def game_code(context, game: str) -> str:
-    return f"{game}_{secrets.token_hex(4)}"
+async def send_kb(msg):
+    await msg.reply_text("👇 از دکمه‌های پایین هم می‌تونی استفاده کنی.", reply_markup=bottom_kb(load_content()))
 
 
-def invite_url(context, code: str) -> str:
-    link = f"https://t.me/{context.bot.username}?startapp={code}"
-    return "https://t.me/share/url?url=" + quote(link) + "&text=" + quote("بیا با هم بازی کنیم 🎮")
+async def start_cmd(update, context):
+    if not await gate(update, context):
+        return
+    await send_home(update, context)
+    await send_kb(update.effective_message)
 
 
-async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """در گروه یا پیوی: /game  ← هر دکمه یک اتاق مشترک برای همه‌ی اعضا است."""
-    data = load_content()
-    rows = []
-    for it in data["sections"]["games"]["items"]:
-        if it.get("game"):
-            code = game_code(context, it["game"])
-            rows.append([Btn(it["title"], url=f"https://t.me/{context.bot.username}?startapp={code}")])
-    await update.effective_message.reply_text(
-        "🎮 یه بازی انتخاب کن. هر کسی دکمه رو بزنه وارد همون اتاق می‌شه.",
-        reply_markup=Markup(rows),
-    )
+async def on_text(update, context):
+    if not await gate(update, context):
+        return
+    data, t = load_content(), (update.message.text or "").strip()
+    s = data["sections"]
+    keys = {s["services"]["title"]: "services", s["tutorials"]["title"]: "tutorials",
+            s["games"]["title"]: "games", data["settings"]["title"]: "settings"}
+    if t in keys:
+        return await update.message.reply_text(get_category(data, keys[t])["title"], reply_markup=cat_markup(data, keys[t]))
+    if t == "💬 پشتیبانی":
+        return await update.message.reply_text(data["support"]["text"], reply_markup=support_markup(data))
+    await send_home(update, context)
 
 
-# ---------- هندلرها ----------
-
-async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_button(update, context):
     q = update.callback_query
+    if q.data == "joined":
+        return await on_joined(update, context)
     await q.answer()
-    data = load_content()
-    parts = q.data.split(":")
-
+    if not await gate(update, context):
+        return
+    data, parts = load_content(), q.data.split(":")
     try:
         if parts[0] == "home":
             await show(q, data["welcome"], home_markup(data))
-
         elif parts[0] == "support":
-            sup = data["support"]
-            rows = [
-                [Btn("💬 پیام به پشتیبانی", "success", url=tg_link(sup["contact"]))],
-                HOME_ROW,
-            ]
-            await show(q, sup["text"], Markup(rows))
-
+            await show(q, data["support"]["text"], support_markup(data))
         elif parts[0] == "cat":
-            key = parts[1]
-            cat = get_category(data, key)
-            rows = [
-                [Btn(it["title"], callback_data=f"item:{key}:{i}")]
-                for i, it in enumerate(cat["items"])
-            ]
-            rows.append(HOME_ROW)
-            await show(q, cat["title"], Markup(rows))
-
+            await show(q, get_category(data, parts[1])["title"], cat_markup(data, parts[1]))
         elif parts[0] == "item":
             key, idx = parts[1], int(parts[2])
             it = get_category(data, key)["items"][idx]
             rows = []
-            if it.get("game"):
-                code = game_code(context, it["game"])
-                rows.append([Btn("🎮 ورود به بازی", web_app=WebAppInfo(url=f"{data['games_base']}?p={code}"))])
-                rows.append([Btn("📤 دعوت دوست", url=invite_url(context, code))])
             if it.get("inline"):
                 rows.append([Btn("📤 ارسال به چت یا گروه", "success", switch_inline_query=it["inline"])])
             if it.get("url"):
                 rows.append([Btn("🔗 مشاهده", "primary", url=it["url"])])
             if it.get("contact"):
                 rows.append([Btn("💬 سفارش / پیام به ادمین", "success", url=tg_link(it["contact"]))])
-            rows.append(back_row(key))
-            rows.append(HOME_ROW)
+            rows += [[Btn("⬅️ بازگشت", callback_data=f"cat:{key}")], HOME_ROW]
             await show(q, f"{it['title']}\n\n{it['text']}", Markup(rows))
-
     except (KeyError, IndexError, ValueError):
         log.exception("callback نامعتبر: %s", q.data)
         await show(q, "این بخش پیدا نشد. به منوی اصلی برگرد.", Markup([HOME_ROW]))
@@ -226,15 +271,28 @@ def xo_kb(g):
     for r in range(3):
         row = []
         for c in range(3):
-            i = r * 3 + c
-            v = g["b"][i]
+            i, v = r * 3 + c, g["b"][r * 3 + c]
             cb = "xo:noop" if (g["res"] or v) else f"xo:{i}"
             row.append(Btn({"X": "❌", "O": "⭕"}.get(v, "▫️"), {"X": "danger", "O": "primary"}.get(v), callback_data=cb))
         rows.append(row)
     return Markup(rows)
 
 
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def need_join(context, q):
+    """بازیکن باید عضو کانال‌های اجباری باشد؛ وگرنه هشدار می‌گیرد."""
+    miss = await not_joined(context, q.from_user.id)
+    if not miss:
+        return True
+    await q.answer("🔒 اول عضو کانال‌های زیر شو و دوباره بزن:\n" + "\n".join(miss), show_alert=True)
+    return False
+
+
+async def inline_query(update, context):
+    # فرستنده‌ی بازی هم باید عضو کانال‌ها باشد
+    if await not_joined(context, update.inline_query.from_user.id):
+        return await update.inline_query.answer(
+            [], cache_time=0,
+            button=InlineQueryResultsButton(text="🔒 اول عضو کانال‌ها شو", start_parameter="join"))
     q = update.inline_query.query.strip().lower()
     res = []
     if q in ("", "snakes"):
@@ -252,7 +310,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.inline_query.answer(res, cache_time=30)
 
 
-async def game_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def game_cmd(update, context):
     await update.effective_message.reply_text(
         "🎮 بازی رو انتخاب کن و به هر چت یا گروهی بفرست. نیازی نیست ربات عضو اون چت باشه.",
         reply_markup=Markup([
@@ -266,8 +324,8 @@ async def board_file_id(context, pos):
     chat = load_content().get("storage_chat_id") or context.bot_data.get("storage")
     if not chat:
         raise RuntimeError("storage chat not set")
-    png = await asyncio.to_thread(engine.render_board, pos)
-    m = await context.bot.send_photo(chat, png)
+    jpg = await asyncio.to_thread(engine.render_board, pos)
+    m = await context.bot.send_photo(chat, jpg)
     fid = m.photo[-1].file_id
     try:
         await m.delete()
@@ -276,7 +334,7 @@ async def board_file_id(context, pos):
     return fid
 
 
-async def on_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_game(update, context):
     q = update.callback_query
     mid = q.inline_message_id
     if not mid:
@@ -299,6 +357,8 @@ async def on_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def snakes_cb(context, q, games, mid, act, u, name):
     g = games.get(mid)
     if act == "join":
+        if not await need_join(context, q):
+            return
         g = games.setdefault(mid, engine.sn_new())
         if g["started"]:
             return await q.answer("بازی شروع شده.", show_alert=True)
@@ -343,6 +403,8 @@ async def xo_cb(context, q, games, mid, cell, u, name):
     if len(g["p"]) <= idx:
         if any(p[0] == u.id for p in g["p"]):
             return await q.answer("منتظر حریف باش 😉")
+        if not await need_join(context, q):
+            return
         g["p"].append((u.id, name))
     elif g["p"][idx][0] != u.id:
         return await q.answer("نوبت تو نیست 😅")
@@ -356,25 +418,32 @@ async def xo_cb(context, q, games, mid, cell, u, name):
 
 async def run():
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler(["start", "menu"], send_home))
-    app.add_handler(CommandHandler("game", game_cmd))
+    app.add_handler(CommandHandler(["start", "menu"], start_cmd))
     app.add_handler(CommandHandler("game", game_cmd))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(on_game, pattern=r"^(sn|xo):"))
     app.add_handler(CallbackQueryHandler(on_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, send_home))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
-    # RUN_SECONDS: برای GitHub Actions. بعد از این مدت ربات خاموش می‌شود
-    # و اجرای بعدی workflow کار را ادامه می‌دهد. اگر تنظیم نشود، دائمی اجرا می‌شود.
+    # RUN_SECONDS: برای GitHub Actions؛ بعد از این مدت خاموش می‌شود تا اجرای بعدی ادامه دهد.
     run_seconds = int(os.environ.get("RUN_SECONDS", "0"))
 
     async with app:
+        try:  # دکمه‌ی منو (پایین سمت چپ کادر پیام) و لیست دستورها
+            await app.bot.set_my_commands([
+                BotCommand("start", "🚀 شروع دوباره"),
+                BotCommand("menu", "🏠 صفحه اصلی"),
+                BotCommand("game", "🎮 بازی‌ها"),
+            ])
+            await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        except Exception:
+            log.exception("تنظیم دستورها ناموفق بود")
         await app.start()
         await app.updater.start_polling()
         log.info("ربات روشن شد.")
         if run_seconds > 0:
             await asyncio.sleep(run_seconds)
-            log.info("زمان اجرا تمام شد، خاموش می‌شوم تا اجرای بعدی ادامه دهد.")
+            log.info("زمان اجرا تمام شد؛ خاموش می‌شوم تا اجرای بعدی ادامه دهد.")
         else:
             await asyncio.Event().wait()
         await app.updater.stop()
