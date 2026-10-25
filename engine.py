@@ -1,50 +1,85 @@
 """منطق بازی‌ها و ساخت تصویر. بدون وابستگی به تلگرام."""
 import html
 import io
+import math
 import random
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-SNAKES = {16: 6, 47: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78}
-LADDERS = {1: 38, 4: 14, 9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100}
-COLORS = [(239, 68, 68), (34, 197, 94), (59, 130, 246), (234, 179, 8), (168, 85, 247)]
-EMO = ["🔴", "🟢", "🔵", "🟡", "🟣"]
-CELL = 64
+BASE = Path(__file__).parent
+# مار و نردبان‌ها دقیقاً مطابق نقاشی تخته (board.jpg)
+SNAKES = {97: 65, 87: 47, 72: 50, 61: 42, 34: 12}
+LADDERS = {7: 26, 12: 31, 23: 44, 43: 64, 48: 67, 62: 81, 66: 85, 73: 92}
+EMO = ["🦁", "🐉", "🌳", "🔥", "🐺"]  # شیر، اژدها، درخت، ققنوس، گرگ (به ترتیب مهره‌ها)
+COIN = 68
+HINTS = True  # نمایش خط‌چین و مقصد مار و نردبان‌ها روی تخته؛ برای خاموش کردن False بذار
+LAYOUT = {
+    1: [(0, 0)], 2: [(-26, 0), (26, 0)], 3: [(-26, -18), (26, -18), (0, 24)],
+    4: [(-26, -22), (26, -22), (-26, 22), (26, 22)], 5: [(-26, -22), (26, -22), (-26, 22), (26, 22), (0, 0)],
+}
 esc = html.escape
+_A = {}
 
 
 def xy(n):
     r, c = divmod(n - 1, 10)
     if r % 2:
         c = 9 - c
-    return c * CELL + CELL // 2, (9 - r) * CELL + CELL // 2
+    return 47 + 119.75 * (c + .5), 29 + 116.8 * (9 - r + .5)
+
+
+def _assets():
+    if not _A:
+        _A["board"] = Image.open(BASE / "board.jpg").convert("RGBA")
+        sheet = Image.open(BASE / "coins.png").convert("RGBA")
+        h = sheet.height
+        _A["coins"] = [sheet.crop((i * h, 0, (i + 1) * h, h)).resize((COIN, COIN), Image.LANCZOS) for i in range(5)]
+    return _A
+
+
+def _hints(im):
+    """خط‌چین و برچسب مقصد روی هر مار (قرمز) و نردبان (سبز) تا معلوم باشه کجا می‌رن."""
+    d = ImageDraw.Draw(im, "RGBA")
+    f = ImageFont.load_default(size=24)
+    items = [(a, b, (220, 38, 38), 1) for a, b in SNAKES.items()] + [(a, b, (22, 163, 74), -1) for a, b in LADDERS.items()]
+    for a, b, col, dirn in items:
+        (x1, y1), (x2, y2) = xy(a), xy(b)
+        n = max(int(math.hypot(x2 - x1, y2 - y1) / 24), 2)
+        for i in range(0, n, 2):
+            t0, t1 = i / n, min((i + 1) / n, 1)
+            d.line([(x1 + (x2 - x1) * t0, y1 + (y2 - y1) * t0), (x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1)],
+                   fill=col + (200,), width=7)
+        d.ellipse([x2 - 12, y2 - 12, x2 + 12, y2 + 12], fill=(255, 255, 255, 235), outline=col + (255,), width=5)
+        t = str(b)
+        w = d.textlength(t, font=f)
+        cx, cy = x1, y1 + 40
+        d.rounded_rectangle([cx - w / 2 - 30, cy - 17, cx + w / 2 + 14, cy + 17], 14, fill=col + (235,), outline="white", width=2)
+        ax = cx - w / 2 - 15
+        tri = [(ax - 8, cy - 7 * dirn), (ax + 8, cy - 7 * dirn), (ax, cy + 8 * dirn)]
+        d.polygon(tri, fill="white")
+        d.text((cx - w / 2 + 2, cy - 14), t, fill="white", font=f)
 
 
 def render_board(pos):
-    S = CELL * 10
-    im = Image.new("RGB", (S, S + 50), (16, 17, 42))
-    d = ImageDraw.Draw(im)
-    f = ImageFont.load_default(size=14)
-    for n in range(1, 101):
-        x, y = xy(n)
-        d.rectangle([x - 32, y - 32, x + 32, y + 32], fill=(38, 42, 104) if n % 2 else (48, 53, 127))
-        d.text((x - 29, y - 29), str(n), fill=(139, 144, 214), font=f)
-    for a, b in LADDERS.items():
-        d.line([xy(a), xy(b)], fill=(161, 98, 7), width=12)
-        d.line([xy(a), xy(b)], fill=(253, 230, 138), width=3)
-    for a, b in SNAKES.items():
-        (x1, y1), (x2, y2) = xy(a), xy(b)
-        cx, cy = (x1 + x2) / 2 + (y2 - y1) * .25, (y1 + y2) / 2 - (x2 - x1) * .25
-        pts = [((1 - t) ** 2 * x1 + 2 * t * (1 - t) * cx + t * t * x2,
-                (1 - t) ** 2 * y1 + 2 * t * (1 - t) * cy + t * t * y2) for t in (i / 20 for i in range(21))]
-        d.line(pts, fill=(22, 163, 74), width=11, joint="curve")
-        d.ellipse([x1 - 13, y1 - 13, x1 + 13, y1 + 13], fill=(220, 38, 38))
+    A = _assets()
+    im = A["board"].copy()
+    if HINTS:
+        _hints(im)
+    groups = {}
     for i, p in enumerate(pos):
-        x, y = xy(p) if p else (40 + i * 50, S + 25)
-        ox, oy = ((i % 3 - 1) * 18, (i // 3) * 18 - 9) if p else (0, 0)
-        d.ellipse([x + ox - 14, y + oy - 14, x + ox + 14, y + oy + 14], fill=COLORS[i], outline="white", width=3)
+        groups.setdefault(max(p, 1), []).append(i)
+    for cell, ids in groups.items():
+        cx, cy = xy(cell)
+        for k, i in enumerate(ids):
+            ox, oy = LAYOUT[len(ids)][k]
+            x, y = int(cx + ox - COIN / 2), int(cy + oy - COIN / 2)
+            sh = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            ImageDraw.Draw(sh).ellipse([x + 3, y + 8, x + COIN + 3, y + COIN + 8], fill=(0, 0, 0, 110))
+            im = Image.alpha_composite(im, sh)
+            im.alpha_composite(A["coins"][i], (x, y))
     buf = io.BytesIO()
-    im.save(buf, "PNG", optimize=True)
+    im.convert("RGB").resize((1000, 1000), Image.LANCZOS).save(buf, "JPEG", quality=88)
     return buf.getvalue()
 
 

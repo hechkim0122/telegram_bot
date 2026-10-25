@@ -31,6 +31,9 @@ log = logging.getLogger("donyaye-man")
 
 import engine
 
+BOARD_URL = os.environ.get(
+    "BOARD_URL", "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/board.jpg"
+)
 BANNER_URL = os.environ.get(
     "BANNER_URL", "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/banner.jpg"
 )
@@ -237,7 +240,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q in ("", "snakes"):
         g = engine.sn_new()
         res.append(InlineQueryResultPhoto(
-            id="snakes", photo_url=BANNER_URL, thumbnail_url=BANNER_URL,
+            id="snakes", photo_url=BOARD_URL, thumbnail_url=BANNER_URL,
             title="🐍 مارپله", description="۲ تا ۵ نفره، با تصویر زنده",
             caption=engine.sn_caption(g), parse_mode="HTML", reply_markup=sn_kb(g)))
     if q in ("", "xo"):
