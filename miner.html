@@ -1,0 +1,64 @@
+<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>استخراج</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:#0b1020;--cd:#141b34;--ln:#222c52;--ac:#2f7bff;--ok:#16c784;--tx:#e8ecff;--mu:#8a94bd}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:Tahoma,sans-serif;padding-bottom:90px;user-select:none}
+.p{display:none;padding:16px}.p.on{display:block}
+.cd{background:var(--cd);border:1px solid var(--ln);border-radius:16px;padding:14px;margin:10px 0}
+.big{font-size:32px;font-weight:700}.mu{color:var(--mu);font-size:13px}.row{display:flex;justify-content:space-between;align-items:center}
+button{font:inherit;border:0;border-radius:12px;padding:13px;color:#fff;background:var(--ac);width:100%;margin-top:8px}
+button.g{background:var(--ok)}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#0e1530;border-top:1px solid var(--ln);padding:6px 0 max(6px,env(safe-area-inset-bottom))}
+nav a{flex:1;text-align:center;font-size:12px;color:var(--mu);padding:6px 0}nav a.on{color:var(--ac)}nav i{display:block;font-size:22px;font-style:normal}
+#coin{width:200px;height:200px;border-radius:50%;margin:14px auto;display:flex;align-items:center;justify-content:center;font-size:92px;font-weight:700;background:radial-gradient(circle at 35% 30%,#3fe0b0,#0f9d78 60%,#0a6b52);box-shadow:0 0 40px #16c78466;transition:transform .08s}
+#coin:active{transform:scale(.93)}
+.bat{height:16px;border-radius:8px;background:#0a0f22;border:1px solid var(--ln);overflow:hidden}.bat b{display:block;height:100%;background:linear-gradient(90deg,#16c784,#a3e635)}
+.fl{position:fixed;color:#a3e635;font-weight:700;pointer-events:none;animation:up .8s forwards}@keyframes up{to{transform:translateY(-70px);opacity:0}}
+.nets{display:flex;gap:8px}.nets span{flex:1;text-align:center;padding:10px;border-radius:10px;border:1px solid var(--ln);font-size:13px}.nets span.on{border-color:var(--ac);color:var(--ac)}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--ln);background:#0a0f22;color:var(--tx);margin-top:8px;font:inherit;direction:ltr;user-select:text}
+.lk{direction:ltr;word-break:break-all;background:#0a0f22;border-radius:10px;padding:10px;font-size:13px;user-select:text}
+#t{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#000c;padding:10px 16px;border-radius:12px;display:none;z-index:9}
+</style></head><body>
+<div class="p on" id="home"><div class="cd row"><div style="display:flex;gap:10px;align-items:center"><div id="av" style="width:46px;height:46px;border-radius:50%;background:var(--ac);display:flex;align-items:center;justify-content:center;font-size:20px"></div><div><b id="nm"></b><div class="mu">پروفایل</div></div></div></div>
+<div class="cd"><div class="mu">موجودی شما</div><div class="big"><span id="b1"></span> <small>USDT</small></div><div class="mu" id="un"></div></div>
+<div class="cd"><div class="row"><span>🔋 باتری امروز</span><span id="l1"></span></div><div class="bat" style="margin-top:8px"><b id="bb1"></b></div></div>
+<div class="cd mu">ℹ️ این یک برنامه‌ی پاداش است و استخراج واقعی ارز انجام نمی‌شود. پاداش‌ها از طرف ما و به‌صورت دستی بعد از بررسی پرداخت می‌شود.</div></div>
+<div class="p" id="mine"><div class="cd row"><span>موجودی</span><b><span id="b2"></span> USDT</b></div>
+<div id="coin">₮</div><div class="mu" style="text-align:center">روی سکه بزن؛ هر ضربه ۰.۰۰۱ دلار</div>
+<div class="cd"><div class="row"><span>🔋 باتری</span><span id="l2"></span></div><div class="bat" style="margin-top:8px"><b id="bb2"></b></div></div>
+<button class="g" onclick="syn()">💾 ثبت پاداش (<span id="pd">0</span> ضربه)</button><div class="mu" style="text-align:center;margin-top:6px">پاداش بعد از «ثبت» به موجودیت اضافه می‌شود.</div></div>
+<div class="p" id="wal"><div class="cd"><div class="mu">موجودی قابل برداشت</div><div class="big"><span id="b3"></span> <small>USDT</small></div></div>
+<div class="cd"><div class="mu">شبکه</div><div class="nets" id="nets"></div><input id="ad" placeholder="آدرس کیف پول"><input id="am" type="number" inputmode="decimal" placeholder="مبلغ (حداقل ۵ دلار)">
+<button onclick="wd()">⬆️ برداشت</button><div class="mu" style="margin-top:8px">حداقل برداشت ۵ دلار است. پرداخت دستی و بعد از بررسی انجام می‌شود. آدرس را با دقت وارد کن؛ تتر برگشت‌پذیر نیست.</div></div></div>
+<div class="p" id="inv"><div class="cd"><b>🎁 دعوت دوستان</b><p class="mu">برای هر دعوت موفق ۰.۵ دلار می‌گیری. دعوت وقتی ثبت می‌شود که دوستت عضو کانال‌ها شود و حداقل ۱۰۰ ضربه بزند.</p>
+<div class="lk" id="lk"></div><button onclick="cp()">📋 کپی لینک</button><button class="g" onclick="sh()">📤 اشتراک‌گذاری</button></div>
+<div class="cd row"><span>دعوت‌های موفق</span><b id="iv"></b></div><div class="cd row"><span>درآمد از دعوت</span><b><span id="ie"></span> USDT</b></div></div>
+<nav><a class="on" onclick="go('home',this)"><i>🏠</i>خانه</a><a onclick="go('mine',this)"><i>⛏</i>استخراج</a><a onclick="go('wal',this)"><i>👛</i>کیف پول</a><a onclick="go('inv',this)"><i>👥</i>دعوت</a></nav><div id="t"></div>
+<script>
+const T=Telegram.WebApp;T.ready();T.expand();
+const Q=new URLSearchParams(location.search),TAP=.001,$=i=>document.getElementById(i);
+const bal=+Q.get('b')||0,srv=+Q.get('l')||0,inv=+Q.get('i')||0,bot=Q.get('bot')||'',uid=Q.get('id')||'',link=`https://t.me/${bot}?start=ref_${uid}`;
+const K='m'+uid,stamp=Q.get('b')+'|'+Q.get('l');let pend=0,net='TRC20';
+try{const s=JSON.parse(localStorage[K]||'{}');if(s.s===stamp)pend=s.p||0}catch(e){}
+const sv=()=>{try{localStorage[K]=JSON.stringify({s:stamp,p:pend})}catch(e){}};
+const toast=m=>{const t=$('t');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2000)};
+function draw(){const l=Math.max(0,srv-pend),sh=(bal+pend*TAP).toFixed(3);
+['b1','b2'].forEach(i=>$(i).textContent=sh);$('b3').textContent=bal.toFixed(3);
+$('un').textContent=pend?`${(pend*TAP).toFixed(3)} دلار هنوز ثبت نشده`:'';
+['l1','l2'].forEach(i=>$(i).textContent=l+' / 500');['bb1','bb2'].forEach(i=>$(i).style.width=(l/5)+'%');
+$('pd').textContent=pend;$('iv').textContent=inv;$('ie').textContent=(inv*.5).toFixed(2)}
+function go(p,a){document.querySelectorAll('.p').forEach(x=>x.classList.toggle('on',x.id==p));document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('on',x==a))}
+$('coin').addEventListener('pointerdown',e=>{if(srv-pend<=0)return toast('باتری خالیه؛ فردا دوباره پر می‌شه');pend++;sv();draw();
+try{T.HapticFeedback.impactOccurred('light')}catch(x){}
+const f=document.createElement('div');f.className='fl';f.textContent='+0.001';f.style.left=(e.clientX-20)+'px';f.style.top=(e.clientY-30)+'px';document.body.appendChild(f);setTimeout(()=>f.remove(),800)});
+function syn(){if(!pend)return toast('ضربه‌ای برای ثبت نیست');T.sendData(JSON.stringify({a:'sync',t:pend}))}
+function wd(){if(pend)return toast('اول ضربه‌هات رو «ثبت» کن');const a=$('ad').value.trim(),m=parseFloat($('am').value);
+if(!a)return toast('آدرس کیف پول رو وارد کن');if(!(m>=5))return toast('حداقل برداشت ۵ دلار است');if(m>bal)return toast('موجودی کافی نیست');
+T.sendData(JSON.stringify({a:'wd',net,addr:a,amt:m}))}
+const nb=$('nets');['TRC20','BEP20','ERC20'].forEach(n=>{const s=document.createElement('span');s.textContent=n;s.className=n==net?'on':'';s.onclick=()=>{net=n;[...nb.children].forEach(c=>c.className=c==s?'on':'')};nb.appendChild(s)});
+const u=(T.initDataUnsafe||{}).user||{};$('nm').textContent=u.first_name||'کاربر';$('av').textContent=(u.first_name||'?')[0];$('lk').textContent=link;
+function cp(){try{navigator.clipboard.writeText(link);toast('کپی شد ✅')}catch(e){toast(link)}}
+function sh(){T.openTelegramLink('https://t.me/share/url?url='+encodeURIComponent(link)+'&text='+encodeURIComponent('بیا با هم پاداش جمع کنیم 🎁'))}
+draw();
+</script></body></html>

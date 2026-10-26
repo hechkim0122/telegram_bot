@@ -15,6 +15,7 @@ from telegram import (
     MenuButtonCommands,
     ReplyKeyboardMarkup,
     Update,
+    WebAppInfo,
 )
 from telegram import InlineKeyboardButton as _Btn
 from telegram import InlineKeyboardMarkup as Markup
@@ -30,6 +31,7 @@ from telegram.ext import (
 )
 
 import engine
+import rewards
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger("donyaye-man")
@@ -100,12 +102,13 @@ def support_markup(data):
     return Markup([[Btn("💬 پیام به پشتیبانی", "success", url=tg_link(data["support"]["contact"]))], HOME_ROW])
 
 
-def bottom_kb(data):
+def bottom_kb(data, uid, bot):
     """دکمه‌های ثابت پایین چت"""
     s = data["sections"]
+    miner = KeyboardButton("⛏ استخراج", web_app=WebAppInfo(url=rewards.miner_url(uid, bot)), api_kwargs={"style": "success"})
     return ReplyKeyboardMarkup(
         [
-            [KBtn("🏠 صفحه اصلی", "primary")],
+            [KBtn("🏠 صفحه اصلی", "primary"), miner],
             [KBtn(s["services"]["title"], "primary"), KBtn(s["tutorials"]["title"], "success"), KBtn(s["games"]["title"], "danger")],
             [KBtn(data["settings"]["title"]), KBtn("💬 پشتیبانی", "success")],
         ],
@@ -174,7 +177,9 @@ async def on_joined(update, context):
     except Exception:
         pass
     await send_home(update, context)
-    await send_kb(msg)
+    await send_kb(msg, context)
+    if context.user_data.pop("from_game", False):
+        await msg.reply_text("✅ عضو شدی! حالا برگرد به بازی و دوباره دکمه‌ی «بپیوند» (یا خونه‌ی دوز) رو بزن 🎮")
 
 
 # ---------- صفحه‌ی اصلی ----------
@@ -196,15 +201,21 @@ async def send_home(update, context):
         context.bot_data["banner_id"] = sent.photo[-1].file_id
 
 
-async def send_kb(msg):
-    await msg.reply_text("👇 از دکمه‌های پایین هم می‌تونی استفاده کنی.", reply_markup=bottom_kb(load_content()))
+async def send_kb(msg, context):
+    await msg.reply_text("👇 از دکمه‌های پایین هم می‌تونی استفاده کنی.",
+                         reply_markup=bottom_kb(load_content(), msg.chat_id, context.bot.username))
 
 
 async def start_cmd(update, context):
+    for a in context.args or []:
+        if a == "join":
+            context.user_data["from_game"] = True
+        elif a.startswith("ref_") and a[4:].isdigit():
+            rewards.set_ref(update.effective_user.id, int(a[4:]), update.effective_user.first_name)
     if not await gate(update, context):
         return
     await send_home(update, context)
-    await send_kb(update.effective_message)
+    await send_kb(update.effective_message, context)
 
 
 async def on_text(update, context):
@@ -219,6 +230,15 @@ async def on_text(update, context):
     if t == "💬 پشتیبانی":
         return await update.message.reply_text(data["support"]["text"], reply_markup=support_markup(data))
     await send_home(update, context)
+
+
+async def on_webapp(update, context):
+    if not await gate(update, context):
+        return
+    text = await rewards.handle(update, context)
+    if text:
+        await update.message.reply_text(
+            text, reply_markup=bottom_kb(load_content(), update.effective_user.id, context.bot.username))
 
 
 async def on_button(update, context):
@@ -283,7 +303,8 @@ async def need_join(context, q):
     miss = await not_joined(context, q.from_user.id)
     if not miss:
         return True
-    await q.answer("🔒 اول عضو کانال‌های زیر شو و دوباره بزن:\n" + "\n".join(miss), show_alert=True)
+    # ربات رو باز می‌کنه و دکمه‌های عضویت رو نشونش می‌ده
+    await q.answer(url=f"https://t.me/{context.bot.username}?start=join")
     return False
 
 
@@ -422,13 +443,30 @@ async def run():
     app.add_handler(CommandHandler("game", game_cmd))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(on_game, pattern=r"^(sn|xo):"))
+    app.add_handler(CallbackQueryHandler(rewards.on_wd, pattern=r"^wd:"))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, on_webapp))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
     # RUN_SECONDS: برای GitHub Actions؛ بعد از این مدت خاموش می‌شود تا اجرای بعدی ادامه دهد.
     run_seconds = int(os.environ.get("RUN_SECONDS", "0"))
 
+    rewards.cfg, rewards.joined = load_content, not_joined
+
+    async def saver():
+        while True:
+            await asyncio.sleep(60)
+            chat = load_content().get("storage_chat_id") or app.bot_data.get("storage")
+            if chat:
+                await rewards.save(app.bot, int(chat))
+
     async with app:
+        chat = load_content().get("storage_chat_id")
+        if chat:
+            await rewards.load(app.bot, int(chat))
+        else:
+            log.warning("storage_chat_id تنظیم نشده؛ موجودی‌ها بعد از ری‌استارت پاک می‌شوند!")
+        task = asyncio.create_task(saver())
         try:  # دکمه‌ی منو (پایین سمت چپ کادر پیام) و لیست دستورها
             await app.bot.set_my_commands([
                 BotCommand("start", "🚀 شروع دوباره"),
@@ -446,6 +484,10 @@ async def run():
             log.info("زمان اجرا تمام شد؛ خاموش می‌شوم تا اجرای بعدی ادامه دهد.")
         else:
             await asyncio.Event().wait()
+        task.cancel()
+        chat = load_content().get("storage_chat_id") or app.bot_data.get("storage")
+        if chat:
+            await rewards.save(app.bot, int(chat))
         await app.updater.stop()
         await app.stop()
 
