@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import secrets
+import time
 from pathlib import Path
 
 from telegram import (
@@ -19,10 +21,11 @@ from telegram import (
 )
 from telegram import InlineKeyboardButton as _Btn
 from telegram import InlineKeyboardMarkup as Markup
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     InlineQueryHandler,
@@ -30,6 +33,7 @@ from telegram.ext import (
     filters,
 )
 
+import admin
 import engine
 import rewards
 
@@ -111,7 +115,7 @@ def bottom_kb(data, uid, bot):
             [KBtn("🏠 صفحه اصلی", "primary"), miner],
             [KBtn(s["services"]["title"], "primary"), KBtn(s["tutorials"]["title"], "success"), KBtn(s["games"]["title"], "danger")],
             [KBtn(data["settings"]["title"]), KBtn("💬 پشتیبانی", "success")],
-        ],
+        ] + ([[KBtn("🛠 پنل مدیریت", "danger")]] if uid == rewards.admin_id() else []),
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="یکی از بخش‌ها رو انتخاب کن…",
@@ -154,6 +158,10 @@ async def gate(update, context):
     """True یعنی کاربر اجازه‌ی ادامه دارد. قفل فقط در پیوی ربات اعمال می‌شود."""
     if update.effective_chat.type != "private":
         return True
+    u = update.effective_user
+    if rewards.is_admin(u):
+        await rewards.autoload(context.bot)
+    (await rewards.ensure(context.bot, u.id, u.first_name)).pop("fresh", None)  # حساب کاربر از پیام پین‌شده برمی‌گردد
     miss = await not_joined(context, update.effective_user.id)
     if not miss:
         return True
@@ -169,8 +177,8 @@ async def gate(update, context):
 async def on_joined(update, context):
     q = update.callback_query
     if await not_joined(context, q.from_user.id):
-        return await q.answer("هنوز عضو همه‌ی کانال‌ها نشدی 😅", show_alert=True)
-    await q.answer("✅ خوش اومدی!")
+        return await ans(q, "هنوز عضو همه‌ی کانال‌ها نشدی 😅", show_alert=True)
+    await ans(q, "✅ خوش اومدی!")
     msg = q.message
     try:
         await msg.delete()
@@ -189,6 +197,7 @@ async def send_home(update, context):
     u, ch = update.effective_user, update.effective_chat
     if u and ch.type == "private" and (u.username or "").lower() == data["support"]["contact"].lstrip("@").lower():
         context.bot_data["storage"] = ch.id  # برای ساخت تصویر تخته‌ی بازی
+        rewards.ADMIN["id"] = ch.id
     markup, msg = home_markup(data), update.effective_message
     if not BANNER_FILE.exists():
         return await msg.reply_text(data["welcome"], reply_markup=markup)
@@ -211,7 +220,7 @@ async def start_cmd(update, context):
         if a == "join":
             context.user_data["from_game"] = True
         elif a.startswith("ref_") and a[4:].isdigit():
-            rewards.set_ref(update.effective_user.id, int(a[4:]), update.effective_user.first_name)
+            await rewards.set_ref(context.bot, update.effective_user.id, int(a[4:]), update.effective_user.first_name)
     if not await gate(update, context):
         return
     await send_home(update, context)
@@ -227,6 +236,8 @@ async def on_text(update, context):
             s["games"]["title"]: "games", data["settings"]["title"]: "settings"}
     if t in keys:
         return await update.message.reply_text(get_category(data, keys[t])["title"], reply_markup=cat_markup(data, keys[t]))
+    if t == "🛠 پنل مدیریت" and rewards.is_admin(update.effective_user):
+        return await admin.panel_cmd(update, context)
     if t == "💬 پشتیبانی":
         return await update.message.reply_text(data["support"]["text"], reply_markup=support_markup(data))
     await send_home(update, context)
@@ -245,7 +256,7 @@ async def on_button(update, context):
     q = update.callback_query
     if q.data == "joined":
         return await on_joined(update, context)
-    await q.answer()
+    await ans(q)
     if not await gate(update, context):
         return
     data, parts = load_content(), q.data.split(":")
@@ -274,37 +285,61 @@ async def on_button(update, context):
 
 
 # ---------- بازی‌های اینلاین (داخل هر چت) ----------
+# وضعیت هر بازی با یک gid یکتا نگه‌داری می‌شود (نه فقط inline_message_id)، چون در چت‌های
+# خصوصی ممکن است دو طرف شناسه‌ی متفاوتی برای یک پیام ببینند. همه‌ی شناسه‌ها به‌روز می‌شوند.
 
-def sn_kb(g):
+async def ans(q, *a, **k):
+    """پاسخ به کلیک؛ اگه کلیک قدیمی بود، کل پردازش خراب نشه"""
+    try:
+        await q.answer(*a, **k)
+    except Exception as e:
+        log.info("answer ناموفق: %s", e)
+
+
+def games_db():
+    return rewards.DB.setdefault("g", {})
+
+
+def prune_games():
+    g, cut = games_db(), time.time() - 172800
+    for k in [k for k, v in g.items() if v.get("ts", 0) < cut]:
+        del g[k]
+
+
+def join_rows():
+    """دکمه‌های عضویت کانال‌ها؛ داخل خود پیام بازی نشان داده می‌شوند"""
+    return [[Btn(f"📢 عضویت در {c}", "primary", url=tg_link(c))] for c in load_content().get("required_channels", [])]
+
+
+def sn_kb(g, gid):
     if g["win"] >= 0:
-        return Markup([[Btn("🏆 بازی تموم شد", callback_data="sn:noop")]])
+        return Markup([[Btn("🏆 بازی تموم شد", callback_data=f"sn:{gid}:noop")]])
     if not g["started"]:
         return Markup([
-            [Btn("➕ بپیوند", "success", callback_data="sn:join")],
-            [Btn("▶️ شروع بازی (میزبان)", "primary", callback_data="sn:start")],
-        ])
-    return Markup([[Btn("🎲 بنداز", "primary", callback_data="sn:roll")]])
+            [Btn("➕ بپیوند", "success", callback_data=f"sn:{gid}:join")],
+            [Btn("▶️ شروع بازی", "primary", callback_data=f"sn:{gid}:start")],
+        ] + join_rows())
+    return Markup([[Btn("🎲 بنداز", "primary", callback_data=f"sn:{gid}:roll")]])
 
 
-def xo_kb(g):
+def xo_kb(g, gid):
     rows = []
     for r in range(3):
         row = []
         for c in range(3):
             i, v = r * 3 + c, g["b"][r * 3 + c]
-            cb = "xo:noop" if (g["res"] or v) else f"xo:{i}"
+            cb = f"xo:{gid}:noop" if (g["res"] or v) else f"xo:{gid}:{i}"
             row.append(Btn({"X": "❌", "O": "⭕"}.get(v, "▫️"), {"X": "danger", "O": "primary"}.get(v), callback_data=cb))
         rows.append(row)
-    return Markup(rows)
+    return Markup(rows + (join_rows() if len(g["p"]) < 2 else []))
 
 
 async def need_join(context, q):
-    """بازیکن باید عضو کانال‌های اجباری باشد؛ وگرنه هشدار می‌گیرد."""
+    """بازیکن باید عضو کانال‌ها باشد؛ لینک عضویت زیر خود بازی است، لازم نیست وارد ربات شود."""
     miss = await not_joined(context, q.from_user.id)
     if not miss:
         return True
-    # ربات رو باز می‌کنه و دکمه‌های عضویت رو نشونش می‌ده
-    await q.answer(url=f"https://t.me/{context.bot.username}?start=join")
+    await ans(q, "🔒 اول با دکمه‌های عضویت زیر بازی، عضو این کانال‌ها شو و دوباره بزن:\n" + "\n".join(miss), show_alert=True)
     return False
 
 
@@ -317,18 +352,18 @@ async def inline_query(update, context):
     q = update.inline_query.query.strip().lower()
     res = []
     if q in ("", "snakes"):
-        g = engine.sn_new()
+        gid, g = secrets.token_hex(4), engine.sn_new()
         res.append(InlineQueryResultPhoto(
-            id="snakes", photo_url=BOARD_URL, thumbnail_url=BANNER_URL,
+            id=f"s{gid}", photo_url=BOARD_URL, thumbnail_url=BANNER_URL,
             title="🐍 مارپله", description="۲ تا ۵ نفره، با تصویر زنده",
-            caption=engine.sn_caption(g), parse_mode="HTML", reply_markup=sn_kb(g)))
+            caption=engine.sn_caption(g), parse_mode="HTML", reply_markup=sn_kb(g, gid)))
     if q in ("", "xo"):
-        g = engine.xo_new()
+        gid, g = secrets.token_hex(4), engine.xo_new()
         res.append(InlineQueryResultArticle(
-            id="xo", title="⭕ دوز", description="۲ نفره",
+            id=f"x{gid}", title="⭕ دوز", description="۲ نفره",
             input_message_content=InputTextMessageContent(engine.xo_text(g), parse_mode="HTML"),
-            reply_markup=xo_kb(g)))
-    await update.inline_query.answer(res, cache_time=30)
+            reply_markup=xo_kb(g, gid)))
+    await update.inline_query.answer(res, cache_time=0, is_personal=True)
 
 
 async def game_cmd(update, context):
@@ -341,12 +376,19 @@ async def game_cmd(update, context):
     )
 
 
-async def board_file_id(context, pos):
-    chat = load_content().get("storage_chat_id") or context.bot_data.get("storage")
+async def board_file_id(context, pos, turn=None):
+    chat = rewards.admin_id()
     if not chat:
         raise RuntimeError("storage chat not set")
-    jpg = await asyncio.to_thread(engine.render_board, pos)
-    m = await context.bot.send_photo(chat, jpg)
+    jpg = await asyncio.to_thread(engine.render_board, pos, turn)
+    for attempt in (1, 2):
+        try:
+            m = await context.bot.send_photo(chat, jpg)
+            break
+        except RetryAfter as e:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(e.retry_after + 1)
     fid = m.photo[-1].file_id
     try:
         await m.delete()
@@ -355,95 +397,129 @@ async def board_file_id(context, pos):
     return fid
 
 
+async def edit_all(g, fn):
+    for mid in list(g["mids"]):
+        try:
+            await fn(mid)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                log.warning("ویرایش پیام بازی ناموفق: %s", e)
+        except Exception as e:
+            log.warning("ویرایش پیام بازی ناموفق: %s", e)
+
+
+def track(g, mid):
+    if mid not in g["mids"]:
+        g["mids"].append(mid)
+    g["ts"] = time.time()
+    rewards.touch()
+
+
 async def on_game(update, context):
     q = update.callback_query
     mid = q.inline_message_id
     if not mid:
-        return await q.answer("این بازی رو از طریق ارسال اینلاین بفرست.", show_alert=True)
-    kind, act = q.data.split(":", 1)
-    games = context.bot_data.setdefault("games", {})
-    u, name = q.from_user, q.from_user.first_name
+        return await ans(q, "این بازی رو از طریق ارسال اینلاین بفرست.", show_alert=True)
+    kind, gid, act = q.data.split(":", 2)
     if act == "noop":
-        return await q.answer()
+        return await ans(q)
+    u, name = q.from_user, q.from_user.first_name
     try:
         if kind == "sn":
-            await snakes_cb(context, q, games, mid, act, u, name)
+            await snakes_cb(context, q, gid, mid, act, u, name)
         else:
-            await xo_cb(context, q, games, mid, int(act), u, name)
-    except BadRequest as e:
-        if "not modified" not in str(e).lower():
-            log.exception("خطا در بازی")
+            await xo_cb(context, q, gid, mid, int(act), u, name)
+    except Exception:
+        log.exception("خطا در بازی")
 
 
-async def snakes_cb(context, q, games, mid, act, u, name):
-    g = games.get(mid)
+async def snakes_cb(context, q, gid, mid, act, u, name):
+    games = games_db()
+    g = games.get(gid)
     if act == "join":
         if not await need_join(context, q):
             return
-        g = games.setdefault(mid, engine.sn_new())
+        g = games.setdefault(gid, {**engine.sn_new(), "mids": []})
+        track(g, mid)
         if g["started"]:
-            return await q.answer("بازی شروع شده.", show_alert=True)
+            return await ans(q, "بازی شروع شده.", show_alert=True)
         if any(p[0] == u.id for p in g["players"]):
-            return await q.answer("تو قبلاً پیوستی ✅")
+            return await ans(q, "تو قبلاً پیوستی ✅")
         if len(g["players"]) >= 5:
-            return await q.answer("ظرفیت پر شده.", show_alert=True)
-        g["players"].append((u.id, name))
+            return await ans(q, "ظرفیت پر شده.", show_alert=True)
+        g["players"].append([u.id, name])
     elif not g:
-        return await q.answer("این بازی منقضی شده. یه بازی جدید بفرست.", show_alert=True)
-    elif act == "start":
-        if u.id != g["players"][0][0]:
-            return await q.answer("فقط میزبان می‌تونه شروع کنه.", show_alert=True)
-        if len(g["players"]) < 2:
-            return await q.answer("حداقل ۲ نفر لازمه.", show_alert=True)
-        g["started"], g["pos"] = True, [0] * len(g["players"])
-    elif act == "roll":
-        if not g["started"] or g["win"] >= 0:
-            return await q.answer()
-        if u.id != g["players"][g["T"]][0]:
-            return await q.answer("نوبت تو نیست 😅")
-        engine.sn_roll(g)
-    await q.answer()
-    cap, kb = engine.sn_caption(g), sn_kb(g)
+        return await ans(q, "این بازی منقضی شده. یه بازی جدید بفرست.", show_alert=True)
+    else:
+        track(g, mid)
+        if act == "start":
+            if g["started"]:
+                return await ans(q)
+            if not any(p[0] == u.id for p in g["players"]):
+                return await ans(q, "اول «بپیوند» رو بزن.", show_alert=True)
+            if len(g["players"]) < 2:
+                return await ans(q, "حداقل ۲ نفر لازمه.", show_alert=True)
+            g["started"], g["pos"] = True, [0] * len(g["players"])
+        elif act == "roll":
+            if not g["started"] or g["win"] >= 0:
+                return await ans(q)
+            if u.id != g["players"][g["T"]][0]:
+                return await ans(q, "نوبت تو نیست 😅")
+            engine.sn_roll(g)
+    await ans(q)
+    rewards.touch()
+    cap, kb, fid = engine.sn_caption(g), sn_kb(g, gid), None
     if g["started"]:
         try:
-            fid = await board_file_id(context, g["pos"])
-            return await context.bot.edit_message_media(
-                inline_message_id=mid, media=InputMediaPhoto(fid, caption=cap, parse_mode="HTML"), reply_markup=kb)
-        except BadRequest:
-            raise
-        except Exception:
-            log.warning("تصویر ساخته نشد؛ فقط متن به‌روز می‌شود")
-    await context.bot.edit_message_caption(inline_message_id=mid, caption=cap, parse_mode="HTML", reply_markup=kb)
+            fid = await board_file_id(context, g["pos"], g["T"] if g["win"] < 0 else g["win"])
+        except Exception as e:
+            log.warning("تصویر ساخته نشد؛ فقط متن به‌روز می‌شود: %s", e)
+
+    async def one(m):
+        if fid:
+            await context.bot.edit_message_media(inline_message_id=m, media=InputMediaPhoto(fid, caption=cap, parse_mode="HTML"), reply_markup=kb)
+        else:
+            await context.bot.edit_message_caption(inline_message_id=m, caption=cap, parse_mode="HTML", reply_markup=kb)
+    await edit_all(g, one)
 
 
-async def xo_cb(context, q, games, mid, cell, u, name):
-    g = games.setdefault(mid, engine.xo_new())
+async def xo_cb(context, q, gid, mid, cell, u, name):
+    games = games_db()
+    g = games.setdefault(gid, {**engine.xo_new(), "mids": []})
+    track(g, mid)
     if g["res"] or g["b"][cell]:
-        return await q.answer()
+        return await ans(q)
     idx = g["n"] % 2
     if len(g["p"]) <= idx:
         if any(p[0] == u.id for p in g["p"]):
-            return await q.answer("منتظر حریف باش 😉")
+            return await ans(q, "منتظر حریف باش 😉")
         if not await need_join(context, q):
             return
-        g["p"].append((u.id, name))
+        g["p"].append([u.id, name])
     elif g["p"][idx][0] != u.id:
-        return await q.answer("نوبت تو نیست 😅")
+        return await ans(q, "نوبت تو نیست 😅")
     g["b"][cell] = "X" if idx == 0 else "O"
     g["n"] += 1
     g["res"] = engine.xo_result(g["b"])
-    await q.answer()
-    await context.bot.edit_message_text(
-        inline_message_id=mid, text=engine.xo_text(g), parse_mode="HTML", reply_markup=xo_kb(g))
+    await ans(q)
+    rewards.touch()
+    txt, kb = engine.xo_text(g), xo_kb(g, gid)
+    await edit_all(g, lambda m: context.bot.edit_message_text(inline_message_id=m, text=txt, parse_mode="HTML", reply_markup=kb))
 
 
 async def run():
     app = ApplicationBuilder().token(TOKEN).build()
+    rewards.cfg, rewards.joined = load_content, not_joined
+    rewards.kb = lambda uid: bottom_kb(load_content(), uid, app.bot.username)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & ~filters.COMMAND, admin.msg), group=-1)
     app.add_handler(CommandHandler(["start", "menu"], start_cmd))
     app.add_handler(CommandHandler("game", game_cmd))
+    app.add_handler(CommandHandler("admin", admin.panel_cmd))
+    app.add_handler(ChatMemberHandler(admin.on_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(InlineQueryHandler(inline_query))
     app.add_handler(CallbackQueryHandler(on_game, pattern=r"^(sn|xo):"))
     app.add_handler(CallbackQueryHandler(rewards.on_wd, pattern=r"^wd:"))
+    app.add_handler(CallbackQueryHandler(admin.cb, pattern=r"^adm:"))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, on_webapp))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
@@ -451,22 +527,15 @@ async def run():
     # RUN_SECONDS: برای GitHub Actions؛ بعد از این مدت خاموش می‌شود تا اجرای بعدی ادامه دهد.
     run_seconds = int(os.environ.get("RUN_SECONDS", "0"))
 
-    rewards.cfg, rewards.joined = load_content, not_joined
-
     async def saver():
         while True:
-            await asyncio.sleep(60)
-            chat = load_content().get("storage_chat_id") or app.bot_data.get("storage")
-            if chat:
-                await rewards.save(app.bot, int(chat))
+            await asyncio.sleep(30)
+            prune_games()
+            await rewards.retry(app.bot)
+            if rewards.admin_id():
+                await rewards.save(app.bot, rewards.admin_id())
 
     async with app:
-        chat = load_content().get("storage_chat_id")
-        if chat:
-            await rewards.load(app.bot, int(chat))
-        else:
-            log.warning("storage_chat_id تنظیم نشده؛ موجودی‌ها بعد از ری‌استارت پاک می‌شوند!")
-        task = asyncio.create_task(saver())
         try:  # دکمه‌ی منو (پایین سمت چپ کادر پیام) و لیست دستورها
             await app.bot.set_my_commands([
                 BotCommand("start", "🚀 شروع دوباره"),
@@ -476,8 +545,13 @@ async def run():
             await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         except Exception:
             log.exception("تنظیم دستورها ناموفق بود")
+        if rewards.admin_id():
+            await rewards.autoload(app.bot)
+        else:
+            log.warning("admin_id تنظیم نشده؛ ادمین با یوزرنیم شناخته می‌شود و فهرست کاربران بعد از ری‌استارت دیرتر بالا می‌آید.")
         await app.start()
         await app.updater.start_polling()
+        task = asyncio.create_task(saver())
         log.info("ربات روشن شد.")
         if run_seconds > 0:
             await asyncio.sleep(run_seconds)
@@ -485,10 +559,10 @@ async def run():
         else:
             await asyncio.Event().wait()
         task.cancel()
-        chat = load_content().get("storage_chat_id") or app.bot_data.get("storage")
-        if chat:
-            await rewards.save(app.bot, int(chat))
         await app.updater.stop()
+        await rewards.retry(app.bot)
+        if rewards.admin_id():
+            await rewards.save(app.bot, rewards.admin_id())
         await app.stop()
 
 

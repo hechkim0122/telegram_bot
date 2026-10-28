@@ -85,10 +85,11 @@
       ]
     }
   },
-  "storage_chat_id": 0,
+  "storage_chat_id": 8564515287,
   "required_channels": [
     "@donyayeman0122",
     "@kingproxy0122"
   ],
-  "miner_url": "https://hechkim0122.github.io/telegram_bot/miner.html"
+  "miner_url": "https://hechkim0122.github.io/telegram_bot/miner.html",
+  "admin_id": 8564515287
 }
