@@ -1,10 +1,12 @@
 import asyncio
+import html
 import json
 import logging
 import os
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from telegram import (
     BotCommand,
@@ -102,6 +104,10 @@ def cat_markup(data, key):
     return Markup(rows + [HOME_ROW])
 
 
+def cat_text(data, key):
+    return f"{get_category(data, key)['title']}\n━━━━━━━━━━━━\nیکی از گزینه‌ها رو انتخاب کن 👇"
+
+
 def support_markup(data):
     return Markup([[Btn("💬 پیام به پشتیبانی", "success", url=tg_link(data["support"]["contact"]))], HOME_ROW])
 
@@ -114,7 +120,7 @@ def bottom_kb(data, uid, bot):
         [
             [KBtn("🏠 صفحه اصلی", "primary"), miner],
             [KBtn(s["services"]["title"], "primary"), KBtn(s["tutorials"]["title"], "success"), KBtn(s["games"]["title"], "danger")],
-            [KBtn(data["settings"]["title"]), KBtn("💬 پشتیبانی", "success")],
+            [KBtn("👤 حساب من", "primary"), KBtn(data["settings"]["title"]), KBtn("💬 پشتیبانی", "success")],
         ] + ([[KBtn("🛠 پنل مدیریت", "danger")]] if uid == rewards.admin_id() else []),
         resize_keyboard=True,
         is_persistent=True,
@@ -199,14 +205,15 @@ async def send_home(update, context):
         context.bot_data["storage"] = ch.id  # برای ساخت تصویر تخته‌ی بازی
         rewards.ADMIN["id"] = ch.id
     markup, msg = home_markup(data), update.effective_message
+    hello = (f"سلام {u.first_name} 👋\n\n" if u else "") + data["welcome"]
     if not BANNER_FILE.exists():
-        return await msg.reply_text(data["welcome"], reply_markup=markup)
+        return await msg.reply_text(hello, reply_markup=markup)
     cached = context.bot_data.get("banner_id")
     if cached:
-        await msg.reply_photo(cached, caption=data["welcome"], reply_markup=markup)
+        await msg.reply_photo(cached, caption=hello, reply_markup=markup)
     else:
         with open(BANNER_FILE, "rb") as f:
-            sent = await msg.reply_photo(f, caption=data["welcome"], reply_markup=markup)
+            sent = await msg.reply_photo(f, caption=hello, reply_markup=markup)
         context.bot_data["banner_id"] = sent.photo[-1].file_id
 
 
@@ -227,6 +234,22 @@ async def start_cmd(update, context):
     await send_kb(update.effective_message, context)
 
 
+async def account_view(update, context):
+    u = update.effective_user
+    a = await rewards.ensure(context.bot, u.id, u.first_name)
+    link = rewards.ref_link(context.bot.username, u.id)
+    text = (f"👤 <b>حساب من</b>\n━━━━━━━━━━━━\n🙋 {html.escape(u.first_name)}\n"
+            f"💰 موجودی: <b>${a['bal']:.3f}</b>\n"
+            f"👥 دعوت‌های موفق: <b>{a['inv']}</b> (برای برداشت حداقل {rewards.NEED_INV} نفر)\n"
+            f"⛏ ضربه‌های امروز: {a['taps']}/{rewards.DAILY}\n💸 مجموع برداشت: ${a['x']:g}\n"
+            + (f"⏳ درخواست برداشت در حال بررسی: ${a['pw']:g}\n" if a["pw"] else "")
+            + f"\n🔗 لینک دعوت تو:\n<code>{link}</code>\n\n🎁 به ازای هر دوستی که وارد بشه و فعال بشه ${rewards.REF:g} می‌گیری.")
+    share = f"https://t.me/share/url?url={quote(link)}&text={quote('بیا تو «دنیای من» 🎮⛏')}"
+    await update.effective_message.reply_text(
+        text, parse_mode="HTML",
+        reply_markup=Markup([[Btn("📤 ارسال لینک دعوت به دوستان", "success", url=share)], HOME_ROW]))
+
+
 async def on_text(update, context):
     if not await gate(update, context):
         return
@@ -235,9 +258,11 @@ async def on_text(update, context):
     keys = {s["services"]["title"]: "services", s["tutorials"]["title"]: "tutorials",
             s["games"]["title"]: "games", data["settings"]["title"]: "settings"}
     if t in keys:
-        return await update.message.reply_text(get_category(data, keys[t])["title"], reply_markup=cat_markup(data, keys[t]))
+        return await update.message.reply_text(cat_text(data, keys[t]), reply_markup=cat_markup(data, keys[t]))
     if t == "🛠 پنل مدیریت" and rewards.is_admin(update.effective_user):
         return await admin.panel_cmd(update, context)
+    if t == "👤 حساب من":
+        return await account_view(update, context)
     if t == "💬 پشتیبانی":
         return await update.message.reply_text(data["support"]["text"], reply_markup=support_markup(data))
     await send_home(update, context)
@@ -266,7 +291,7 @@ async def on_button(update, context):
         elif parts[0] == "support":
             await show(q, data["support"]["text"], support_markup(data))
         elif parts[0] == "cat":
-            await show(q, get_category(data, parts[1])["title"], cat_markup(data, parts[1]))
+            await show(q, cat_text(data, parts[1]), cat_markup(data, parts[1]))
         elif parts[0] == "item":
             key, idx = parts[1], int(parts[2])
             it = get_category(data, key)["items"][idx]
@@ -278,7 +303,7 @@ async def on_button(update, context):
             if it.get("contact"):
                 rows.append([Btn("💬 سفارش / پیام به ادمین", "success", url=tg_link(it["contact"]))])
             rows += [[Btn("⬅️ بازگشت", callback_data=f"cat:{key}")], HOME_ROW]
-            await show(q, f"{it['title']}\n\n{it['text']}", Markup(rows))
+            await show(q, f"{it['title']}\n━━━━━━━━━━━━\n{it['text']}", Markup(rows))
     except (KeyError, IndexError, ValueError):
         log.exception("callback نامعتبر: %s", q.data)
         await show(q, "این بخش پیدا نشد. به منوی اصلی برگرد.", Markup([HOME_ROW]))
@@ -313,10 +338,10 @@ def join_rows():
 
 def sn_kb(g, gid):
     if g["win"] >= 0:
-        return Markup([[Btn("🏆 بازی تموم شد", callback_data=f"sn:{gid}:noop")]])
+        return Markup([[Btn("🔄 بازی دوباره", "success", callback_data=f"sn:{gid}:again")]])
     if not g["started"]:
         return Markup([
-            [Btn("➕ بپیوند", "success", callback_data=f"sn:{gid}:join")],
+            [Btn(f"➕ بپیوند ({len(g['players'])}/5)", "success", callback_data=f"sn:{gid}:join")],
             [Btn("▶️ شروع بازی", "primary", callback_data=f"sn:{gid}:start")],
         ] + join_rows())
     return Markup([[Btn("🎲 بنداز", "primary", callback_data=f"sn:{gid}:roll")]])
@@ -329,8 +354,11 @@ def xo_kb(g, gid):
         for c in range(3):
             i, v = r * 3 + c, g["b"][r * 3 + c]
             cb = f"xo:{gid}:noop" if (g["res"] or v) else f"xo:{gid}:{i}"
-            row.append(Btn({"X": "❌", "O": "⭕"}.get(v, "▫️"), {"X": "danger", "O": "primary"}.get(v), callback_data=cb))
+            win = g["res"] in ("X", "O") and i in engine.xo_line(g["b"])
+            row.append(Btn({"X": "❌", "O": "⭕"}.get(v, "▫️"), "success" if win else {"X": "danger", "O": "primary"}.get(v), callback_data=cb))
         rows.append(row)
+    if g["res"]:
+        rows.append([Btn("🔄 دور بعد", "success", callback_data=f"xo:{gid}:again")])
     return Markup(rows + (join_rows() if len(g["p"]) < 2 else []))
 
 
@@ -427,6 +455,8 @@ async def on_game(update, context):
     try:
         if kind == "sn":
             await snakes_cb(context, q, gid, mid, act, u, name)
+        elif act == "again":
+            await xo_again_cb(context, q, gid, mid, u)
         else:
             await xo_cb(context, q, gid, mid, int(act), u, name)
     except Exception:
@@ -460,6 +490,14 @@ async def snakes_cb(context, q, gid, mid, act, u, name):
             if len(g["players"]) < 2:
                 return await ans(q, "حداقل ۲ نفر لازمه.", show_alert=True)
             g["started"], g["pos"] = True, [0] * len(g["players"])
+            rewards.bump("games_sn")
+        elif act == "again":
+            if g["win"] < 0:
+                return await ans(q)
+            if not any(p[0] == u.id for p in g["players"]):
+                return await ans(q, "فقط بازیکن‌های همین بازی می‌تونن دور بعد رو شروع کنن.", show_alert=True)
+            engine.sn_again(g)
+            rewards.bump("games_sn")
         elif act == "roll":
             if not g["started"] or g["win"] >= 0:
                 return await ans(q)
@@ -496,6 +534,8 @@ async def xo_cb(context, q, gid, mid, cell, u, name):
         if not await need_join(context, q):
             return
         g["p"].append([u.id, name])
+        if len(g["p"]) == 2:
+            rewards.bump("games_xo")
     elif g["p"][idx][0] != u.id:
         return await ans(q, "نوبت تو نیست 😅")
     g["b"][cell] = "X" if idx == 0 else "O"
@@ -503,6 +543,22 @@ async def xo_cb(context, q, gid, mid, cell, u, name):
     g["res"] = engine.xo_result(g["b"])
     await ans(q)
     rewards.touch()
+    txt, kb = engine.xo_text(g), xo_kb(g, gid)
+    await edit_all(g, lambda m: context.bot.edit_message_text(inline_message_id=m, text=txt, parse_mode="HTML", reply_markup=kb))
+
+
+async def xo_again_cb(context, q, gid, mid, u):
+    g = games_db().get(gid)
+    if not g:
+        return await ans(q, "این بازی منقضی شده. یه بازی جدید بفرست.", show_alert=True)
+    track(g, mid)
+    if not g["res"]:
+        return await ans(q)
+    if not any(p[0] == u.id for p in g["p"]):
+        return await ans(q, "فقط بازیکن‌های همین بازی می‌تونن دور بعد رو شروع کنن.", show_alert=True)
+    engine.xo_again(g)
+    rewards.bump("games_xo")
+    await ans(q)
     txt, kb = engine.xo_text(g), xo_kb(g, gid)
     await edit_all(g, lambda m: context.bot.edit_message_text(inline_message_id=m, text=txt, parse_mode="HTML", reply_markup=kb))
 

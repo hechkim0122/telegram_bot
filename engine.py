@@ -114,20 +114,39 @@ def sn_roll(g):
     g["msg"] = f"{esc(name)}: {note}"
 
 
+def bar(p):
+    n = min(p // 10, 10)
+    return "▰" * n + "▱" * (10 - n)
+
+
+def sn_again(g):
+    """بازی دوباره با همان بازیکن‌ها؛ نفر بعد از برنده شروع می‌کند"""
+    n = len(g["players"])
+    g["T"] = (g["win"] + 1) % n if g["win"] >= 0 else 0
+    g["pos"], g["win"], g["msg"], g["started"] = [0] * n, -1, "", True
+
+
 def sn_caption(g):
-    lines = ["🐍 <b>مارپله</b>"]
+    lines = ["🐍 <b>مارپله</b>", "━━━━━━━━━━━━"]
     if not g["players"]:
-        return lines[0] + "\n\nبازیکن‌ها رو منتظریم. ۲ تا ۵ نفر بپیوندن 👇"
+        return "\n".join(lines) + "\nهنوز کسی نپیوسته. ۲ تا ۵ نفر بپیوندن 👇"
     for i, (_, n) in enumerate(g["players"]):
-        at = f" — خونه {g['pos'][i]}" if g["started"] else ""
-        lines.append(f"{EMO[i]} {esc(n)}{at}")
+        if g["started"]:
+            mark = "👉 " if i == g["T"] and g["win"] < 0 else ""
+            lines.append(f"{mark}{EMO[i]} <b>{esc(n)}</b> — خونه {g['pos'][i]}\n      {bar(g['pos'][i])}")
+        else:
+            lines.append(f"{EMO[i]} {esc(n)}" + (" 👑" if i == 0 else ""))
     if not g["started"]:
-        lines.append("\nنفر اول میزبانه و بازی رو شروع می‌کنه.")
-    elif g["win"] >= 0:
-        lines += ["", f"🏆 <b>{esc(g['players'][g['win']][1])} برنده شد!</b>"]
+        lines += ["", f"👥 {len(g['players'])}/5 نفر  •  👑 میزبان بازی رو شروع می‌کنه"]
     else:
-        lines += ["", g["msg"], f"نوبت: {EMO[g['T']]} <b>{esc(g['players'][g['T']][1])}</b>"]
-    return "\n".join(l for l in lines if l is not None)
+        lines.append("")
+        if g["msg"]:
+            lines.append(g["msg"])
+        if g["win"] >= 0:
+            lines.append(f"🏆 <b>{esc(g['players'][g['win']][1])}</b> برنده شد! 🎉")
+        else:
+            lines.append(("" if g["msg"] else "🎲 بازی شروع شد!\n") + f"نوبت: {EMO[g['T']]} <b>{esc(g['players'][g['T']][1])}</b>")
+    return "\n".join(lines)
 
 
 # ---------- دوز ----------
@@ -138,21 +157,35 @@ def xo_new():
     return {"p": [], "b": [""] * 9, "n": 0, "res": None}
 
 
+def xo_line(b):
+    for l in LINES:
+        if b[l[0]] and b[l[0]] == b[l[1]] == b[l[2]]:
+            return l
+    return ()
+
+
 def xo_result(b):
-    for a, c, e in LINES:
-        if b[a] and b[a] == b[c] == b[e]:
-            return b[a]
+    if xo_line(b):
+        return b[xo_line(b)[0]]
     return "D" if all(b) else None
+
+
+def xo_again(g):
+    """دور بعد: جای ❌ و ⭕ عوض می‌شود"""
+    g["p"].reverse()
+    g["b"], g["n"], g["res"] = [""] * 9, 0, None
 
 
 def xo_text(g):
     x = esc(g["p"][0][1]) if g["p"] else "؟"
     o = esc(g["p"][1][1]) if len(g["p"]) > 1 else "؟"
-    t = f"⭕ <b>دوز</b>\n❌ {x}   ⚔️   ⭕ {o}\n\n"
+    t = f"⭕ <b>دوز</b>\n━━━━━━━━━━━━\n❌ {x}   ⚔️   ⭕ {o}\n\n"
     if g["res"] in ("X", "O"):
-        return t + f"🏆 <b>{x if g['res'] == 'X' else o} برد!</b>"
+        return t + f"🏆 <b>{x if g['res'] == 'X' else o}</b> برد! 🎉"
     if g["res"] == "D":
         return t + "🤝 مساوی شد"
     if not g["p"]:
         return t + "هر کی خونه‌ای رو بزنه، می‌شه ❌"
-    return t + f"نوبت: {'❌' if g['n'] % 2 == 0 else '⭕'}"
+    if len(g["p"]) < 2:
+        return t + "⏳ منتظر حریف… یکی دیگه خونه‌ی خالی رو بزنه"
+    return t + f"نوبت: {'❌ ' + x if g['n'] % 2 == 0 else '⭕ ' + o}"

@@ -1,7 +1,9 @@
 """پنل مدیریت: ارسال هر پیام (با دکمه) به گروه/کانال و تبلیغ برای همه‌ی کاربران"""
 import asyncio
+import html
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 
 from telegram import InlineKeyboardButton as _B
 from telegram import InlineKeyboardMarkup as IM
@@ -23,8 +25,36 @@ def panel_markup():
     return IM([
         [B("📣 ارسال پیام به گروه یا کانال", "primary", callback_data="adm:grp")],
         [B("📢 تبلیغ برای همه‌ی کاربران", "success", callback_data="adm:t:users")],
-        [B("📊 آمار", callback_data="adm:stat")],
+        [B("🔎 جستجوی کاربر", "primary", callback_data="adm:find"), B("📊 آمار", callback_data="adm:stat")],
     ])
+
+
+def stats_text():
+    D = rewards.DB
+    st = D.get("st", {})
+    today = datetime.now(timezone.utc).date()
+    dates = [v for v in D["users"].values() if isinstance(v, str)]
+    n_today = sum(1 for d in dates if d == today.isoformat())
+    n_week = sum(1 for d in dates if d >= (today - timedelta(days=6)).isoformat())
+    pend = max(0, int(st.get("wd_req", 0) - st.get("paid_n", 0) - st.get("rej_n", 0)))
+    return ("📊 <b>آمار ربات</b>\n━━━━━━━━━━━━\n"
+            f"👥 کاربران: <b>{len(D['users'])}</b>\n   • عضو شده‌ی امروز: {n_today}\n   • ۷ روز اخیر: {n_week}\n"
+            f"📣 گروه/کانال‌ها: <b>{len(D['groups'])}</b>\n\n"
+            f"🎮 بازی‌ها: 🐍 {int(st.get('games_sn', 0))}  |  ⭕ {int(st.get('games_xo', 0))}\n"
+            f"🕹 بازی‌های فعال (۴۸ ساعت اخیر): {len(D.get('g', {}))}\n\n"
+            f"⛏ مجموع ضربه‌ها: {int(st.get('taps', 0)):,}\n"
+            f"💸 برداشت‌ها: پرداخت‌شده {int(st.get('paid_n', 0))} (${st.get('paid', 0):g}) • رد‌شده {int(st.get('rej_n', 0))} • در انتظار {pend}")
+
+
+async def user_card(context, uid):
+    u = await rewards.ensure(context.bot, uid, create=False)
+    if not u:
+        return None
+    ref = f"<code>{u['ref']}</code>" if u["ref"] else "-"
+    return (f"👤 <b>{html.escape(u['name'] or '-')}</b> (<code>{uid}</code>)\n"
+            f"💰 موجودی: ${u['bal']:.3f}\n👥 دعوت‌های موفق: {u['inv']}\n⛏ مجموع ضربه‌ها: {u['tot']}\n"
+            f"💸 برداشت‌شده: ${u['x']:g}" + (f"\n⏳ درخواست باز: ${u['pw']:g}" if u["pw"] else "")
+            + f"\n🔗 دعوت‌کننده: {ref}")
 
 
 async def panel_cmd(update, context):
@@ -94,6 +124,16 @@ async def msg(update, context):
         context.user_data.pop("adm")
         await m.reply_text(f"✅ «{ch.title}» اضافه شد.", reply_markup=panel_markup())
         raise ApplicationHandlerStop
+    if step == "find":
+        t = (m.text or "").strip()
+        card = await user_card(context, int(t)) if t.isdigit() else None
+        if card:
+            context.user_data.pop("adm", None)
+            await m.reply_text(card, parse_mode="HTML", reply_markup=panel_markup())
+        else:
+            await m.reply_text("❌ کاربری با این آیدی عددی پیدا نشد. دوباره بفرست یا از پنل لغو کن.",
+                               reply_markup=IM([[B("❌ لغو", "danger", callback_data="adm:cancel")]]))
+        raise ApplicationHandlerStop
     if step == "msg":
         a["src"], a["step"] = (m.chat_id, m.message_id), "ready"
         await preview(update, context)
@@ -120,8 +160,15 @@ async def cb(update, context):
         ud.pop("adm", None)
         await q.edit_message_text("🛠 <b>پنل مدیریت</b>", parse_mode="HTML", reply_markup=panel_markup())
     elif act == "stat":
-        await q.edit_message_text(f"📊 کاربران: {len(rewards.DB['users'])}\n👥 گروه/کانال‌ها: {len(rewards.DB['groups'])}",
-                                  reply_markup=IM([[B("⬅️ بازگشت", callback_data="adm:home")]]))
+        try:
+            await q.edit_message_text(stats_text(), parse_mode="HTML", reply_markup=IM([
+                [B("🔄 تازه‌سازی", "primary", callback_data="adm:stat")], [B("⬅️ بازگشت", callback_data="adm:home")]]))
+        except Exception:
+            pass  # بدون تغییر
+    elif act == "find":
+        ud["adm"] = {"step": "find"}
+        await q.edit_message_text("آیدی عددی کاربر رو بفرست (مثلاً از پیام درخواست برداشت):",
+                                  reply_markup=IM([[B("❌ لغو", "danger", callback_data="adm:cancel")]]))
     elif act == "grp":
         rows = [[B(f"📣 {t}", callback_data=f"adm:t:{cid}")] for cid, t in rewards.DB["groups"].items()]
         rows += [[B("➕ افزودن گروه/کانال", "success", callback_data="adm:add")], [B("⬅️ بازگشت", callback_data="adm:home")]]

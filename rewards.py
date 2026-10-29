@@ -33,6 +33,17 @@ def touch():
     _s["dirty"] = True
 
 
+def bump(key, n=1):
+    """شمارنده‌های آمار (داخل db.json ذخیره می‌شوند)"""
+    st = DB.setdefault("st", {})
+    st[key] = round(st.get(key, 0) + n, 3)
+    touch()
+
+
+def ref_link(bot, uid):
+    return f"https://t.me/{bot}?start=ref_{uid}"
+
+
 def _conf():
     return int(cfg().get("admin_id") or cfg().get("storage_chat_id") or 0)
 
@@ -111,7 +122,7 @@ async def ensure(bot, uid, name="", create=True):
             u = new_user(name)
         DB["u"][k] = u
         if k not in DB["users"]:
-            DB["users"][k] = 1
+            DB["users"][k] = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # تاریخ عضویت
             touch()
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if u["day"] != day:
@@ -195,6 +206,8 @@ async def sync(context, uid, u, d):
     t = max(0, min(t, DAILY - u["taps"]))  # سقف روزانه سمت ربات اعمال می‌شود
     u["taps"] += t
     u["tot"] += t
+    if t:
+        bump("taps", t)
     u["bal"] = round(u["bal"] + t * TAP, 4)
     inv = u["ref"]
     if inv and not u["paid"] and u["tot"] >= REF_TAPS and not await joined(context, uid):
@@ -245,6 +258,7 @@ async def withdraw(context, m, u, d):
         return "⚠️ ثبت درخواست ناموفق بود. بعداً دوباره امتحان کن."
     u["bal"] = round(u["bal"] - amt, 4)
     u["pw"] = amt
+    bump("wd_req")
     await save_user(context.bot, fu.id)
     return f"✅ درخواست برداشت ${amt:g} ثبت شد. بعد از بررسی به‌صورت دستی پرداخت می‌شه."
 
@@ -261,9 +275,12 @@ async def on_wd(update, context):
         return await q.edit_message_reply_markup(None)
     if act == "ok":
         u["x"] = round(u["x"] + amt, 3)
+        bump("paid", amt)
+        bump("paid_n")
         note, tag = f"✅ برداشت ${amt:g} برات پرداخت شد.", "\n\n✅ پرداخت شد"
     else:
         u["bal"] = round(u["bal"] + amt, 4)
+        bump("rej_n")
         note, tag = f"❌ درخواست برداشت رد شد و ${amt:g} به موجودیت برگشت.", "\n\n❌ رد شد"
     u["pw"] = 0
     await save_user(context.bot, uid)
@@ -284,7 +301,7 @@ async def load(bot, chat):
             d = json.loads(bytes(await f.download_as_bytearray()))
             d.pop("u", None)
             DB.update(d)
-            for k in ("g", "users", "groups"):
+            for k in ("g", "users", "groups", "st"):
                 DB.setdefault(k, {})
             log.info("db.json خوانده شد: %d کاربر", len(DB["users"]))
     except Exception:
