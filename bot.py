@@ -455,8 +455,8 @@ async def snakes_cb(context, q, gid, mid, act, u, name):
         if act == "start":
             if g["started"]:
                 return await ans(q)
-            if not any(p[0] == u.id for p in g["players"]):
-                return await ans(q, "اول «بپیوند» رو بزن.", show_alert=True)
+            if not g["players"] or g["players"][0][0] != u.id:
+                return await ans(q, "فقط نفر اول (میزبان) می‌تونه بازی رو شروع کنه.", show_alert=True)
             if len(g["players"]) < 2:
                 return await ans(q, "حداقل ۲ نفر لازمه.", show_alert=True)
             g["started"], g["pos"] = True, [0] * len(g["players"])

@@ -1,6 +1,6 @@
 # ربات تلگرام دنیای من
 
-منوی خدمات، آموزشات و بازی. محتوا از `content.json` خوانده می‌شود.
+منوی خدمات، آموزشات و بازی‌های اینلاین (مارپله و دوز). محتوا از `content.json` خوانده می‌شود.
 
 ## اجرای محلی
 ```bash
@@ -13,10 +13,11 @@ python bot.py
 فقط `content.json` را عوض کن (بدون نیاز به ری‌استارت ربات).
 - `contact`: دکمه پیام به ادمین
 - `url`: دکمه لینک
-- `webapp`: اجرای بازی HTML5 داخل تلگرام (آدرس باید https باشد)
+- `inline`: دکمه ارسال بازی به چت (`snakes` یا `xo`)
+- `website_url`: آدرس سایت
+- `required_channels`: کانال‌های قفل اجباری
 
-## دیپلوی (مثلاً Render)
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `python bot.py`
-- نوع سرویس: Background Worker
-- متغیر محیطی: `BOT_TOKEN`
+## دیپلوی (GitHub Actions)
+فایل `.github/workflows/bot.yml` هر ۳۰ دقیقه ربات را اجرا می‌کند.
+- توکن را در Settings ← Secrets and variables ← Actions با نام `BOT_TOKEN` بساز.
+- در BotFather حالت Inline را برای ربات فعال کن (برای بازی‌ها لازم است).

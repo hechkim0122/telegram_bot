@@ -61,7 +61,7 @@ def _hints(im):
         d.text((cx - w / 2 + 2, cy - 14), t, fill="white", font=f)
 
 
-def render_board(pos):
+def render_board(pos, turn=None):
     A = _assets()
     im = A["board"].copy()
     if HINTS:
@@ -78,6 +78,8 @@ def render_board(pos):
             ImageDraw.Draw(sh).ellipse([x + 3, y + 8, x + COIN + 3, y + COIN + 8], fill=(0, 0, 0, 110))
             im = Image.alpha_composite(im, sh)
             im.alpha_composite(A["coins"][i], (x, y))
+            if turn is not None and i == turn:  # حلقه‌ی روشن دور مهره‌ی نوبت فعلی
+                ImageDraw.Draw(im, "RGBA").ellipse([x - 6, y - 6, x + COIN + 6, y + COIN + 6], outline=(255, 255, 255, 255), width=6)
     buf = io.BytesIO()
     im.convert("RGB").resize((1000, 1000), Image.LANCZOS).save(buf, "JPEG", quality=88)
     return buf.getvalue()
