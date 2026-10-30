@@ -18,7 +18,6 @@ from telegram import (
     KeyboardButton,
     MenuButtonCommands,
     ReplyKeyboardMarkup,
-    Update,
     WebAppInfo,
 )
 from telegram import InlineKeyboardButton as _Btn
@@ -29,7 +28,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     ChatMemberHandler,
     CommandHandler,
-    ContextTypes,
     InlineQueryHandler,
     MessageHandler,
     filters,
@@ -51,7 +49,8 @@ CONTENT_FILE = BASE / "content.json"
 BANNER_FILE = BASE / "banner.jpg"
 RAW = "https://raw.githubusercontent.com/hechkim0122/telegram_bot/main/"
 BANNER_URL = os.environ.get("BANNER_URL", RAW + "banner.jpg")
-BOARD_URL = os.environ.get("BOARD_URL", RAW + "board.jpg")
+BOARD_URL = os.environ.get("BOARD_URL", RAW + "board_snakes.jpg")
+LUDO_URL = os.environ.get("LUDO_URL", RAW + "board_ludo.jpg")
 
 
 def Btn(text, style=None, **kw):
@@ -347,6 +346,20 @@ def sn_kb(g, gid):
     return Markup([[Btn("🎲 بنداز", "primary", callback_data=f"sn:{gid}:roll")]])
 
 
+def ld_kb(g, gid):
+    if g["win"] >= 0:
+        return Markup([[Btn("🔄 بازی دوباره", "success", callback_data=f"ld:{gid}:again")]])
+    if not g["started"]:
+        return Markup([
+            [Btn(f"➕ بپیوند ({len(g['players'])}/5)", "success", callback_data=f"ld:{gid}:join")],
+            [Btn("▶️ شروع بازی", "primary", callback_data=f"ld:{gid}:start")],
+        ] + join_rows())
+    if g["phase"] == "pick":
+        e = engine.EMO[g["cols"][g["T"]]]
+        return Markup([[Btn(f"{e} مهره {k + 1}", "primary", callback_data=f"ld:{gid}:p{k}") for k in g["sel"]]])
+    return Markup([[Btn("🎲 بنداز", "primary", callback_data=f"ld:{gid}:roll")]])
+
+
 def xo_kb(g, gid):
     rows = []
     for r in range(3):
@@ -385,6 +398,12 @@ async def inline_query(update, context):
             id=f"s{gid}", photo_url=BOARD_URL, thumbnail_url=BANNER_URL,
             title="🐍 مارپله", description="۲ تا ۵ نفره، با تصویر زنده",
             caption=engine.sn_caption(g), parse_mode="HTML", reply_markup=sn_kb(g, gid)))
+    if q in ("", "ludo"):
+        gid, g = secrets.token_hex(4), engine.ld_new()
+        res.append(InlineQueryResultPhoto(
+            id=f"l{gid}", photo_url=LUDO_URL, thumbnail_url=BANNER_URL,
+            title="🎲 منچ", description="۲ تا ۵ نفره، با تصویر زنده",
+            caption=engine.ld_caption(g), parse_mode="HTML", reply_markup=ld_kb(g, gid)))
     if q in ("", "xo"):
         gid, g = secrets.token_hex(4), engine.xo_new()
         res.append(InlineQueryResultArticle(
@@ -399,16 +418,17 @@ async def game_cmd(update, context):
         "🎮 بازی رو انتخاب کن و به هر چت یا گروهی بفرست. نیازی نیست ربات عضو اون چت باشه.",
         reply_markup=Markup([
             [Btn("🐍 مارپله", "success", switch_inline_query="snakes")],
+            [Btn("🎲 منچ", "danger", switch_inline_query="ludo")],
             [Btn("⭕ دوز", "primary", switch_inline_query="xo")],
         ]),
     )
 
 
-async def board_file_id(context, pos, turn=None):
+async def photo_id(context, jpg):
+    """تصویر رو یک بار داخل چت ادمین می‌فرسته تا file_id بگیره (برای ویرایش پیام اینلاین)"""
     chat = rewards.admin_id()
     if not chat:
         raise RuntimeError("storage chat not set")
-    jpg = await asyncio.to_thread(engine.render_board, pos, turn)
     for attempt in (1, 2):
         try:
             m = await context.bot.send_photo(chat, jpg)
@@ -453,8 +473,8 @@ async def on_game(update, context):
         return await ans(q)
     u, name = q.from_user, q.from_user.first_name
     try:
-        if kind == "sn":
-            await snakes_cb(context, q, gid, mid, act, u, name)
+        if kind in GAMES:
+            await board_cb(context, q, kind, gid, mid, act, u, name)
         elif act == "again":
             await xo_again_cb(context, q, gid, mid, u)
         else:
@@ -463,13 +483,49 @@ async def on_game(update, context):
         log.exception("خطا در بازی")
 
 
-async def snakes_cb(context, q, gid, mid, act, u, name):
-    games = games_db()
+def sn_start(g):
+    g["started"], g["pos"] = True, [0] * len(g["players"])
+
+
+def sn_play(g, act, u):
+    """None = حرکت انجام شد، "" = نادیده بگیر، متن = پیام کوتاه به بازیکن"""
+    if act != "roll" or not g["started"] or g["win"] >= 0:
+        return ""
+    if u.id != g["players"][g["T"]][0]:
+        return "نوبت تو نیست 😅"
+    engine.sn_roll(g)
+
+
+def ld_play(g, act, u):
+    if not g["started"] or g["win"] >= 0:
+        return ""
+    if u.id != g["players"][g["T"]][0]:
+        return "نوبت تو نیست 😅"
+    if act == "roll" and g["phase"] == "roll":
+        engine.ld_roll(g)
+    elif act[:1] == "p" and act[1:].isdigit() and g["phase"] == "pick" and int(act[1:]) in g["sel"]:
+        engine.ld_move(g, int(act[1:]))
+    else:
+        return ""
+
+
+GAMES = {
+    "sn": dict(new=engine.sn_new, start=sn_start, again=engine.sn_again, play=sn_play, key="games_sn",
+               caption=engine.sn_caption, kb=sn_kb,
+               jpg=lambda g: engine.render_board(g["pos"], g["T"] if g["win"] < 0 else g["win"])),
+    "ld": dict(new=engine.ld_new, start=engine.ld_start, again=engine.ld_again, play=ld_play, key="games_ld",
+               caption=engine.ld_caption, kb=ld_kb, jpg=engine.render_ludo),
+}
+
+
+async def board_cb(context, q, kind, gid, mid, act, u, name):
+    """مارپله و منچ: عضویت، شروع، دور بعد و حرکت‌ها یک مسیر مشترک دارن"""
+    S, games = GAMES[kind], games_db()
     g = games.get(gid)
     if act == "join":
         if not await need_join(context, q):
             return
-        g = games.setdefault(gid, {**engine.sn_new(), "mids": []})
+        g = games.setdefault(gid, {**S["new"](), "mids": []})
         track(g, mid)
         if g["started"]:
             return await ans(q, "بازی شروع شده.", show_alert=True)
@@ -489,27 +545,25 @@ async def snakes_cb(context, q, gid, mid, act, u, name):
                 return await ans(q, "فقط نفر اول (میزبان) می‌تونه بازی رو شروع کنه.", show_alert=True)
             if len(g["players"]) < 2:
                 return await ans(q, "حداقل ۲ نفر لازمه.", show_alert=True)
-            g["started"], g["pos"] = True, [0] * len(g["players"])
-            rewards.bump("games_sn")
+            S["start"](g)
+            rewards.bump(S["key"])
         elif act == "again":
             if g["win"] < 0:
                 return await ans(q)
             if not any(p[0] == u.id for p in g["players"]):
                 return await ans(q, "فقط بازیکن‌های همین بازی می‌تونن دور بعد رو شروع کنن.", show_alert=True)
-            engine.sn_again(g)
-            rewards.bump("games_sn")
-        elif act == "roll":
-            if not g["started"] or g["win"] >= 0:
-                return await ans(q)
-            if u.id != g["players"][g["T"]][0]:
-                return await ans(q, "نوبت تو نیست 😅")
-            engine.sn_roll(g)
+            S["again"](g)
+            rewards.bump(S["key"])
+        else:
+            err = S["play"](g, act, u)
+            if err is not None:
+                return await (ans(q, err) if err else ans(q))
     await ans(q)
     rewards.touch()
-    cap, kb, fid = engine.sn_caption(g), sn_kb(g, gid), None
+    cap, kb, fid = S["caption"](g), S["kb"](g, gid), None
     if g["started"]:
         try:
-            fid = await board_file_id(context, g["pos"], g["T"] if g["win"] < 0 else g["win"])
+            fid = await photo_id(context, await asyncio.to_thread(S["jpg"], g))
         except Exception as e:
             log.warning("تصویر ساخته نشد؛ فقط متن به‌روز می‌شود: %s", e)
 
@@ -573,7 +627,7 @@ async def run():
     app.add_handler(CommandHandler("admin", admin.panel_cmd))
     app.add_handler(ChatMemberHandler(admin.on_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(InlineQueryHandler(inline_query))
-    app.add_handler(CallbackQueryHandler(on_game, pattern=r"^(sn|xo):"))
+    app.add_handler(CallbackQueryHandler(on_game, pattern=r"^(sn|ld|xo):"))
     app.add_handler(CallbackQueryHandler(rewards.on_wd, pattern=r"^wd:"))
     app.add_handler(CallbackQueryHandler(admin.cb, pattern=r"^adm:"))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, on_webapp))

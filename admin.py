@@ -40,7 +40,7 @@ def stats_text():
     return ("📊 <b>آمار ربات</b>\n━━━━━━━━━━━━\n"
             f"👥 کاربران: <b>{len(D['users'])}</b>\n   • عضو شده‌ی امروز: {n_today}\n   • ۷ روز اخیر: {n_week}\n"
             f"📣 گروه/کانال‌ها: <b>{len(D['groups'])}</b>\n\n"
-            f"🎮 بازی‌ها: 🐍 {int(st.get('games_sn', 0))}  |  ⭕ {int(st.get('games_xo', 0))}\n"
+            f"🎮 بازی‌ها: 🐍 {int(st.get('games_sn', 0))}  |  🎲 {int(st.get('games_ld', 0))}  |  ⭕ {int(st.get('games_xo', 0))}\n"
             f"🕹 بازی‌های فعال (۴۸ ساعت اخیر): {len(D.get('g', {}))}\n\n"
             f"⛏ مجموع ضربه‌ها: {int(st.get('taps', 0)):,}\n"
             f"💸 برداشت‌ها: پرداخت‌شده {int(st.get('paid_n', 0))} (${st.get('paid', 0):g}) • رد‌شده {int(st.get('rej_n', 0))} • در انتظار {pend}")
