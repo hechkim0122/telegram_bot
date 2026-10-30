@@ -51,7 +51,7 @@ ul{margin:6px 0;padding-inline-start:20px;line-height:2;color:#cdd6f4;font-size:
  <div style="text-align:center"><b style="font-size:20px">⚡ <span id="l2"></span></b><div class="mu">روی سکه بزن؛ هر ضربه ۰.۰۰۱ دلار</div></div>
  <div class="st" style="margin-top:12px"><div><span class="mu">ضربه‌ی ثبت‌نشده</span><b id="pd"></b></div><div><span class="mu">درآمد امروز</span><b id="te"></b></div><div><span class="mu">باتری</span><b id="pc"></b></div></div>
  <button class="g" id="sy" onclick="syn()">💾 ثبت پاداش</button>
- <div class="mu" style="text-align:center;margin-top:8px">برای اضافه شدن به موجودی، «ثبت پاداش» رو بزن. ثبت که شد مینی‌اپ بسته می‌شه.</div>
+ <div class="mu" id="sn" style="text-align:center;margin-top:8px"></div>
 </div>
 
 <div class="p" id="wal">
@@ -77,37 +77,40 @@ ul{margin:6px 0;padding-inline-start:20px;line-height:2;color:#cdd6f4;font-size:
 <script>
 const T=Telegram.WebApp;T.ready();T.expand();try{T.setHeaderColor('#070b1a');T.setBackgroundColor('#070b1a')}catch(e){}
 const Q=new URLSearchParams(location.search),TAP=.001,NEED=6,$=i=>document.getElementById(i);
-const bal=+Q.get('b')||0,srv=+Q.get('l')||0,inv=+Q.get('i')||0,bot=Q.get('bot')||'',uid=Q.get('id')||'',sup=Q.get('sup')||'',chs=(Q.get('ch')||'').split(',').filter(Boolean);
-const link=`https://t.me/${bot}?start=ref_${uid}`,K='m'+uid,stamp=Q.get('b')+'|'+Q.get('l');
-let pend=0,net='TRC20',cur='home';
-try{const s=JSON.parse(localStorage[K]||'{}');if(s.s===stamp)pend=s.p||0}catch(e){}
-const sv=()=>{try{localStorage[K]=JSON.stringify({s:stamp,p:pend})}catch(e){}};
+const today=new Date().toISOString().slice(0,10),dq=Q.get('d')||'';
+const bal=+Q.get('b')||0,srv=(dq&&dq!==today)?500:(+Q.get('l')||0),inv=+Q.get('i')||0,seq=Q.get('s'),bot=Q.get('bot')||'',uid=Q.get('id')||'',sup=Q.get('sup')||'',chs=(Q.get('ch')||'').split(',').filter(Boolean);
+const link=`https://t.me/${bot}?start=ref_${uid}`,K='m'+uid,stamp=[Q.get('b'),Q.get('l'),seq,dq].join('|');
+let pend=0,sent=0,net='TRC20',cur='home';
+try{const s=JSON.parse(localStorage[K]||'{}');if(s.s===stamp){pend=s.p||0;sent=s.x||0}}catch(e){}
+const sv=()=>{try{localStorage[K]=JSON.stringify({s:stamp,p:pend,x:sent})}catch(e){}};
 const toast=m=>{const t=$('t');t.textContent=m;t.style.display='block';clearTimeout(t.h);t.h=setTimeout(()=>t.style.display='none',2200)};
 const IC={home:'<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',mine:'<path d="M5 20L14 11"/><path d="M7 6c5-3 11-1 12 6M7 6l3 3M19 12l-3-3"/>',wal:'<rect x="3" y="7" width="18" height="13" rx="3"/><path d="M3 10V7a2 2 0 0 1 2-2h12"/><circle cx="16.5" cy="13.5" r="1.3"/>',inv:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.5-4 3.2-6 6.5-6s6 2 6.5 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14c3 .2 4.5 2 5 5"/>',more:'<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>'};
 const LB={home:'خانه',mine:'استخراج',wal:'کیف پول',inv:'دعوت',more:'بیشتر'};
 $('nv').innerHTML=Object.keys(IC).map(k=>`<a id="n_${k}" onclick="go('${k}')"><svg viewBox="0 0 24 24">${IC[k]}</svg>${LB[k]}</a>`).join('');
 function go(p){cur=p;document.querySelectorAll('.p').forEach(x=>x.classList.toggle('on',x.id==p));Object.keys(IC).forEach(k=>$('n_'+k).classList.toggle('on',k==p));mb();scrollTo(0,0)}
-function mb(){try{if(cur=='mine'&&pend){T.MainButton.setText('💾 ثبت پاداش ('+pend+' ضربه)').setParams({color:'#10b981'}).show()}else T.MainButton.hide();pend?T.enableClosingConfirmation():T.disableClosingConfirmation()}catch(e){}}
+function mb(){try{if(cur=='mine'&&pend){T.MainButton.setText((sent?'🔁 ارسال دوباره (':'💾 ثبت پاداش (')+pend+' ضربه)').setParams({color:'#10b981'}).show()}else T.MainButton.hide();pend&&!sent?T.enableClosingConfirmation():T.disableClosingConfirmation()}catch(e){}}
 try{T.MainButton.onClick(()=>syn())}catch(e){}
 function draw(){const l=Math.max(0,srv-pend),sh=(bal+pend*TAP).toFixed(3),ok=Math.min(inv,NEED);
 ['b1','b2'].forEach(i=>$(i).textContent=sh);$('b3').textContent=bal.toFixed(3);
-$('pn1').textContent=pend?`${(pend*TAP).toFixed(3)} دلار هنوز ثبت نشده`:'';
+$('pn1').textContent=pend?(sent?`⏳ ${(pend*TAP).toFixed(3)} دلار ارسال شد؛ منتظر تأیید ربات`:`${(pend*TAP).toFixed(3)} دلار هنوز ثبت نشده`):'';
 ['l1','l2'].forEach(i=>$(i).textContent=l+' / 500');$('bb1').style.width=(l/5)+'%';$('pc').textContent=Math.round(l/5)+'٪';
 $('ring').style.strokeDashoffset=880*(1-l/500);$('pd').textContent=pend;$('te').textContent=((500-srv+pend)*TAP).toFixed(3);
 ['iv1','iv2','iv3'].forEach(i=>$(i).textContent=inv+' / '+NEED);['ib1','ib2'].forEach(i=>$(i).style.width=(ok/NEED*100)+'%');
 $('need').textContent=inv>=NEED?'✅ شرط دعوت کامل است':`هنوز ${NEED-inv} نفر دیگه لازمه. از بخش «دعوت» لینکت رو بفرست.`;
-$('wb').classList.toggle('off',inv<NEED);$('sy').classList.toggle('off',!pend);$('ie').textContent=(inv*.5).toFixed(2);mb()}
-$('stage').addEventListener('pointerdown',e=>{e.preventDefault();if(srv-pend<=0)return toast('⚡ باتری خالیه؛ فردا دوباره پر می‌شه');
-pend++;sv();draw();const c=$('coin');c.classList.add('hit');setTimeout(()=>c.classList.remove('hit'),70);
+$('wb').classList.toggle('off',inv<NEED);$('sy').classList.toggle('off',!pend);$('sy').textContent=sent?'🔁 ارسال دوباره':'💾 ثبت پاداش';$('sn').textContent=sent?'پاداشت ارسال شد و ربات که روشن باشه تا چند لحظه‌ی دیگه موجودی به‌روز می‌شه. اگه نشد، دکمه‌ی بالا رو دوباره بزن (دوبار حساب نمی‌شه).':'برای اضافه شدن به موجودی، «ثبت پاداش» رو بزن. ثبت که شد مینی‌اپ بسته می‌شه.';$('ie').textContent=(inv*.5).toFixed(2);mb()}
+$('stage').addEventListener('pointerdown',e=>{e.preventDefault();if(sent)return toast('اول پاداش ارسال‌شده ثبت بشه ⏳');if(srv-pend<=0)return toast('⚡ باتری خالیه؛ فردا دوباره پر می‌شه');
+pend++;sv();draw();if(srv-pend<=0){toast('⚡ باتری تموم شد! «ثبت پاداش» رو بزن');try{T.HapticFeedback.notificationOccurred('warning')}catch(x){}}const c=$('coin');c.classList.add('hit');setTimeout(()=>c.classList.remove('hit'),70);
 try{T.HapticFeedback.impactOccurred('light')}catch(x){}
 const f=document.createElement('div');f.className='fl';f.textContent='+0.001';f.style.left=(e.clientX-24)+'px';f.style.top=(e.clientY-40)+'px';document.body.appendChild(f);setTimeout(()=>f.remove(),900);
 const r=document.createElement('div');r.className='rip';r.style.left=(e.clientX-10)+'px';r.style.top=(e.clientY-10)+'px';document.body.appendChild(r);setTimeout(()=>r.remove(),600)});
-function syn(){if(!pend)return toast('ضربه‌ای برای ثبت نیست');try{T.disableClosingConfirmation()}catch(e){}T.sendData(JSON.stringify({a:'sync',t:pend}))}
+function syn(){if(!pend)return toast('ضربه‌ای برای ثبت نیست');try{T.disableClosingConfirmation()}catch(e){}
+sent=1;sv();draw();
+try{T.sendData(JSON.stringify({a:'sync',t:pend,s:seq===null?undefined:+seq}))}catch(e){sent=0;sv();draw();toast('این صفحه رو از دکمه‌ی «⛏ استخراج» پایین ربات باز کن')}}
 function wd(){if(pend)return toast('اول ضربه‌هات رو «ثبت پاداش» کن');if(inv<NEED)return toast(`برای برداشت باید ${NEED} نفر رو دعوت کنی (الان ${inv})`);
 const a=$('ad').value.trim(),m=parseFloat($('am').value);if(!a)return toast('آدرس کیف پول رو وارد کن');if(!(m>=5))return toast('حداقل برداشت ۵ دلار است');if(m>bal)return toast('موجودی کافی نیست');
-T.sendData(JSON.stringify({a:'wd',net,addr:a,amt:m}))}
+try{T.sendData(JSON.stringify({a:'wd',net,addr:a,amt:m}))}catch(e){toast('این صفحه رو از دکمه‌ی «⛏ استخراج» پایین ربات باز کن')}}
 const nb=$('nets');['TRC20','BEP20','ERC20'].forEach(n=>{const s=document.createElement('span');s.textContent=n;s.className=n==net?'on':'';s.onclick=()=>{net=n;[...nb.children].forEach(c=>c.className=c==s?'on':'')};nb.appendChild(s)});
-const u=(T.initDataUnsafe||{}).user||{},fn=[u.first_name,u.last_name].filter(Boolean).join(' ')||'کاربر';
+const u=(T.initDataUnsafe||{}).user||{},fn=[u.first_name,u.last_name].filter(Boolean).join(' ')||Q.get('n')||'کاربر';
 $('nm').textContent=fn;$('un').textContent=u.username?'@'+u.username:'';$('uid').textContent=u.id||uid;
 $('av').innerHTML=u.photo_url?`<img src="${u.photo_url}" onerror="this.parentNode.textContent='${fn[0]}'">`:fn[0];
 $('lk').textContent=link;$('chs').innerHTML=chs.map(c=>`<button class="g" style="margin:6px 0" onclick="T.openTelegramLink('https://t.me/${c}')">📢 @${c}</button>`).join('');

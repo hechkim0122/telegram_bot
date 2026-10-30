@@ -124,7 +124,7 @@ async def ensure(bot, uid, name="", create=True):
         if k not in DB["users"]:
             DB["users"][k] = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # تاریخ عضویت
             touch()
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = today()
     if u["day"] != day:
         u["day"], u["taps"] = day, 0
     if name:
@@ -175,10 +175,16 @@ async def set_ref(bot, uid, inviter, name=""):
             await save_user(bot, uid)
 
 
+def today():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
 def miner_url(uid, bot):
     u = DB["u"].get(str(uid)) or new_user()
     c = cfg()
-    q = urlencode({"b": round(u["bal"], 3), "l": max(0, DAILY - u["taps"]), "i": u["inv"], "bot": bot, "id": uid,
+    left = DAILY if u["day"] != today() else max(0, DAILY - u["taps"])  # بعد از نیمه‌شب UTC باتری دوباره پر است
+    q = urlencode({"b": round(u["bal"], 3), "l": left, "i": u["inv"], "bot": bot, "id": uid,
+                   "s": u["tot"], "d": u["day"], "n": (u["name"] or "")[:30],
                    "sup": c["support"]["contact"].lstrip("@"),
                    "ch": ",".join(x.lstrip("@") for x in c.get("required_channels", []))})
     return f"{c['miner_url']}?{q}"
@@ -201,8 +207,11 @@ async def handle(update, context):
 async def sync(context, uid, u, d):
     try:
         t = int(d.get("t", 0))
+        seen = int(d["s"]) if d.get("s") is not None else None
     except (TypeError, ValueError):
-        t = 0
+        t, seen = 0, None
+    if seen is not None and seen < u["tot"]:  # این ضربه‌ها قبلاً ثبت شده (ارسال تکراری)
+        return f"ℹ️ این ضربه‌ها قبلاً ثبت شده بود.\n💰 موجودی: ${u['bal']:.3f}\n🔋 باتری امروز: {DAILY - u['taps']}"
     t = max(0, min(t, DAILY - u["taps"]))  # سقف روزانه سمت ربات اعمال می‌شود
     u["taps"] += t
     u["tot"] += t
